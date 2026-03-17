@@ -1,6 +1,6 @@
 # OpenShift Skills Plugin
 
-An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent skills.written in Go (backend) and TypeScript/PatternFly 6 (frontend).
+An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent skills. Written in Go (backend) and TypeScript/PatternFly 6 (frontend).
 
 ## Architecture
 
@@ -71,8 +71,6 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 - **Console proxy for API calls**: All frontend API calls go through the OpenShift console proxy (`/api/proxy/plugin/openshift-skills-plugin/backend/...`), requiring CSRF tokens.
 - **MaaS two-step auth**: Bearer token → `POST /v1/tokens` → session token. Session token used for all subsequent API calls.
 - **Model name from URL**: Inference endpoints expect the URL path segment as model name (e.g. `llama-32-3b`), not the registry ID (e.g. `RedHatAI/llama-3.2-3b-instruct`).
-- **No `<Page>` wrapper**: Console layout provides its own wrapper; adding `<Page>` causes a grey gap.
-- **Chat nav route**: Uses `/skills-plugin/chat` (not `/skills-plugin`) to avoid prefix-match highlighting all nav items.
 
 ## Go Module
 - Module: `github.com/eformat/openshift-skills-plugin`
