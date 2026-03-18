@@ -23,6 +23,10 @@ import {
   Nav,
   NavItem,
   NavList,
+  Checkbox,
+  Label,
+  LabelGroup,
+  ExpandableSection,
 } from '@patternfly/react-core';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -34,10 +38,13 @@ import {
   sendMessage,
   listEndpoints,
   listModels,
+  listSkills,
+  updateSessionSkills,
   Session,
   Message,
   MaaSEndpoint,
   ModelInfo,
+  Skill,
 } from '../utils/api';
 import './styles.css';
 
@@ -52,11 +59,16 @@ export default function ChatPage() {
   const [models, setModels] = React.useState<ModelInfo[]>([]);
   const [selectedEndpoint, setSelectedEndpoint] = React.useState('');
   const [selectedModelId, setSelectedModelId] = React.useState('');
+  const [skills, setSkills] = React.useState<Skill[]>([]);
+  const [selectedSkillIds, setSelectedSkillIds] = React.useState<number[]>([]);
+  const [sessionSkillIds, setSessionSkillIds] = React.useState<number[]>([]);
+  const [skillsExpanded, setSkillsExpanded] = React.useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     loadSessions();
     loadEndpoints();
+    loadSkills();
   }, []);
 
   React.useEffect(() => {
@@ -81,6 +93,15 @@ export default function ChatPage() {
     }
   };
 
+  const loadSkills = async () => {
+    try {
+      const data = await listSkills();
+      setSkills(data || []);
+    } catch (e) {
+      console.error('Failed to load skills', e);
+    }
+  };
+
   const loadModelsForEndpoint = async (endpointId: string) => {
     try {
       const data = await listModels(endpointId ? parseInt(endpointId) : undefined);
@@ -97,6 +118,7 @@ export default function ChatPage() {
     try {
       const data = await getSession(id);
       setMessages(data.messages || []);
+      setSessionSkillIds(data.skill_ids || []);
     } catch (e) {
       console.error('Failed to load session', e);
     }
@@ -109,6 +131,7 @@ export default function ChatPage() {
         provider: 'openai-compatible',
         model: selectedModelId,
         base_url: selectedModel?.url,
+        skill_ids: selectedSkillIds,
       });
       setShowNewSession(false);
       await loadSessions();
@@ -138,6 +161,7 @@ export default function ChatPage() {
     if (currentSessionId === id) {
       setCurrentSessionId(null);
       setMessages([]);
+      setSessionSkillIds([]);
     }
     loadSessions();
   };
@@ -149,13 +173,39 @@ export default function ChatPage() {
     }
   };
 
+  const toggleNewSessionSkill = (skillId: number, checked: boolean) => {
+    setSelectedSkillIds(prev =>
+      checked ? [...prev, skillId] : prev.filter(id => id !== skillId)
+    );
+  };
+
+  const toggleSessionSkill = async (skillId: number, checked: boolean) => {
+    if (!currentSessionId) return;
+    const newIds = checked
+      ? [...sessionSkillIds, skillId]
+      : sessionSkillIds.filter(id => id !== skillId);
+    setSessionSkillIds(newIds);
+    try {
+      await updateSessionSkills(currentSessionId, newIds);
+    } catch (e) {
+      console.error('Failed to update session skills', e);
+    }
+  };
+
+  const enabledSkills = skills.filter(s => s.enabled);
+
   return (
     <>
       <Helmet><title>Skills Chat</title></Helmet>
         <PageSection>
           <Split hasGutter>
             <SplitItem className="skills-sidebar">
-              <Button variant="primary" isBlock onClick={() => { setShowNewSession(true); loadEndpoints(); }}>
+              <Button variant="primary" isBlock onClick={() => {
+                setShowNewSession(true);
+                loadEndpoints();
+                loadSkills();
+                setSelectedSkillIds(enabledSkills.map(s => s.id));
+              }}>
                 New Chat
               </Button>
               <Nav aria-label="Sessions">
@@ -190,6 +240,37 @@ export default function ChatPage() {
                 </EmptyState>
               ) : (
                 <Card className="chat-container">
+                  <div className="chat-skills-bar">
+                    <ExpandableSection
+                      toggleText={`Skills (${sessionSkillIds.length} selected)`}
+                      isExpanded={skillsExpanded}
+                      onToggle={(_e, expanded) => setSkillsExpanded(expanded)}
+                    >
+                      <div className="chat-skills-list">
+                        {enabledSkills.length === 0 ? (
+                          <span className="pf-v6-u-color-200">No skills available. Upload skills in the Skills page.</span>
+                        ) : (
+                          enabledSkills.map(s => (
+                            <Checkbox
+                              key={s.id}
+                              id={`session-skill-${s.id}`}
+                              label={s.name}
+                              isChecked={sessionSkillIds.includes(s.id)}
+                              onChange={(_e, checked) => toggleSessionSkill(s.id, checked)}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </ExpandableSection>
+                    {sessionSkillIds.length > 0 && !skillsExpanded && (
+                      <LabelGroup className="pf-v6-u-mt-xs">
+                        {sessionSkillIds.map(id => {
+                          const skill = skills.find(s => s.id === id);
+                          return skill ? <Label key={id} isCompact color="blue">{skill.name}</Label> : null;
+                        })}
+                      </LabelGroup>
+                    )}
+                  </div>
                   <CardBody className="chat-messages">
                     {messages.map((m, i) => (
                       <div key={i} className={`chat-message chat-message-${m.role}`}>
@@ -255,6 +336,23 @@ export default function ChatPage() {
                 <FormSelectOption key={m.id} value={m.id} label={m.display_name + (m.ready ? '' : ' (not ready)')} />
               ))}
             </FormSelect>
+          </FormGroup>
+          <FormGroup label="Skills" fieldId="skills">
+            {enabledSkills.length === 0 ? (
+              <span className="pf-v6-u-color-200">No enabled skills available.</span>
+            ) : (
+              enabledSkills.map(s => (
+                <Checkbox
+                  key={s.id}
+                  id={`new-session-skill-${s.id}`}
+                  label={s.name}
+                  description={s.description}
+                  isChecked={selectedSkillIds.includes(s.id)}
+                  onChange={(_e, checked) => toggleNewSessionSkill(s.id, checked)}
+                  className="pf-v6-u-mb-xs"
+                />
+              ))
+            )}
           </FormGroup>
         </ModalBody>
         <ModalFooter>

@@ -58,6 +58,7 @@ type ChatRequest struct {
 type AgentOptions struct {
 	Temperature float64
 	MaxTokens   int
+	History     []ChatMessage // Prior conversation messages (inserted between system prompt and user message)
 }
 
 type ChatChoice struct {
@@ -121,8 +122,12 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 
 	messages := []ChatMessage{
 		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: userMessage},
 	}
+	// Insert prior conversation history if provided
+	if opts != nil && len(opts.History) > 0 {
+		messages = append(messages, opts.History...)
+	}
+	messages = append(messages, ChatMessage{Role: "user", Content: userMessage})
 
 	client := &http.Client{Timeout: 120 * time.Second}
 

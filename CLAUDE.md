@@ -5,10 +5,10 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 ## Architecture
 
 ### Frontend (TypeScript, PatternFly 6)
-- **`src/components/ChatPage.tsx`** - Interactive chat with agent loop (shell tool access in plugin pod). Renders markdown responses via `react-markdown` + `remark-gfm` (code blocks, tables, lists, etc.)
+- **`src/components/ChatPage.tsx`** - Interactive chat with agent loop (shell tool access in plugin pod). Renders markdown responses via `react-markdown` + `remark-gfm`. Per-session skill selection (expandable bar above messages, checkboxes in new chat modal). Active session highlighted in sidebar.
 - **`src/components/SkillsPage.tsx`** - Upload/manage SKILLS.md knowledge files
 - **`src/components/SchedulePage.tsx`** - Schedule skills as cron jobs with container image, SA, namespace, prompt, temperature, max token length
-- **`src/components/SettingsPage.tsx`** - Configure MaaS endpoints, export/import SQLite database
+- **`src/components/SettingsPage.tsx`** - Configure MaaS endpoints (registry or single-model), export/import SQLite database
 - **`src/components/styles.css`** - Chat message styling including markdown rendering (code, tables, blockquotes, lists)
 - **`src/utils/api.ts`** - API client with CSRF token handling (`X-CSRFToken` header from `csrf-token` cookie)
 - **`console-extensions.json`** - Plugin routes under `/skills-plugin/{chat,skills,schedule,settings}` in admin perspective "Skills" nav section
@@ -16,7 +16,7 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 ### Backend (Go)
 - **`cmd/backend/main.go`** - HTTP server (gorilla/mux), serves plugin static files + API routes, TLS support for OpenShift serving certs, initializes kube client on startup (non-fatal if unavailable)
 - **`pkg/api/`** - REST handlers:
-  - `chat.go` - `SendMessage` (POST) uses agent loop with local shell; `WebSocketChat` uses simple `maas.Complete()`
+  - `chat.go` - `SendMessage` (POST) uses agent loop with local shell and passes conversation history for multi-turn context; `WebSocketChat` uses simple `maas.Complete()`. Both paths load only session-specific skills (falls back to all enabled skills if none selected).
   - `schedule.go` - Cron scheduler (robfig/cron), two execution paths:
     - **Container image set** → `executeContainerTask()`: creates executor pod → agent loop with `kube.ExecCommand` → stores results in chat session → deletes pod when done
     - **No container image** → `executeLLMTask()`: agent loop with local shell in plugin pod → stores results in chat session
@@ -24,13 +24,16 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
     - Disabled tasks are skipped silently (no failed history entries)
   - `database.go` - `ExportDatabase` (GET, serves raw .db file) and `ImportDatabase` (POST multipart, replaces DB and reinitializes)
   - `skills.go` - CRUD for skills (upload SKILLS.md files)
-  - `sessions.go` - CRUD for chat sessions
-  - `maas_endpoints.go` - CRUD for MaaS endpoints, model listing, health checks. API keys are never returned to the frontend (masked as `"****"`)
+  - `sessions.go` - CRUD for chat sessions with per-session skill selection (`session_skills` junction table). `PUT /sessions/{id}/skills` updates skill associations.
+  - `maas_endpoints.go` - CRUD for MaaS endpoints, model listing, health checks. Supports two endpoint types:
+    - **Model registry** (e.g. `http://maas.example.com/v1`) → lists models via `GET /v1/models`, returns per-model inference URLs
+    - **Single-model URL** (e.g. `http://maas.example.com/prelude-maas/llama-32-3b/v1`) → auto-detected by `IsSingleModelURL()`, queries `GET {url}/models` to get model ID, shown as "Single model: name" in UI
+    - API keys are never returned to the frontend (masked as `"****"`)
   - `helpers.go` - `jsonResponse()`, `httpError()`
 - **`pkg/agent/agent.go`** - LLM-driven agent loop (OpenAI-compatible tool calling API):
   - `RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (string, error)`
   - `ShellExecutor` type: `func(command string) string` - controls where commands run (nil = local `sh -c`)
-  - `AgentOptions` struct: `Temperature float64`, `MaxTokens int` - per-task LLM parameters
+  - `AgentOptions` struct: `Temperature float64`, `MaxTokens int`, `History []ChatMessage` (prior conversation messages inserted between system prompt and user message for multi-turn context)
   - Single `shell` tool definition, iterates up to `maxIterations` (default 15) calling LLM and executing tool calls
   - Strips `<think>` tags from responses (for reasoning models)
 - **`pkg/agent/context.go`** - `newTimeoutContext()` helper
@@ -45,10 +48,13 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
   - `Authenticate()` - exchanges bearer token → session token via `POST {RegistryURL}/v1/tokens`
   - `GetToken()` - exposes session token for agent loop
   - `ListModels()` - fetches `{RegistryURL}/v1/models` with session token, returns per-model URLs
+  - `ListSingleModel(url)` - queries a single-model OpenAI-compatible endpoint's `/v1/models`, returns model info
   - `Complete()` - simple chat completion (used by WebSocket chat path)
-  - Model name is extracted from URL last path segment (e.g. `llama-32-3b` from `.../llama-32-3b`)
+  - `IsSingleModelURL(url)` - detects URLs with path segments before `/v1` (e.g. `.../llama-32-3b/v1`)
+  - `ExtractModelName(url, fallback)` - extracts model name from URL, stripping `/v1` suffix first to avoid returning "v1" as model name. Used by all code paths (chat, schedule container, schedule LLM)
+  - `ModelNameFromURL(url)` - simpler extraction for display purposes
 - **`pkg/database/`** - SQLite (mattn/go-sqlite3) with WAL mode:
-  - `database.go` - Init, migrate, schema for: `skills`, `sessions`, `messages`, `scheduled_tasks`, `task_execution_history`, `maas_endpoints`, `config`
+  - `database.go` - Init, migrate, schema for: `skills`, `sessions`, `messages`, `session_skills`, `scheduled_tasks`, `task_execution_history`, `maas_endpoints`, `config`
   - `GetDBPath()`, `Checkpoint()` (flush WAL), `Reinit(newDBPath)` (close, replace file, reopen with migrations)
   - `models.go` - Go structs: `Skill`, `Session`, `Message`, `ScheduledTask` (includes `Temperature`, `MaxTokens`; `APIKey` uses `json:"-"`), `TaskExecutionHistory`, `MaaSEndpoint`, `Config`
 
@@ -78,7 +84,10 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 - **Scheduled task results in chat**: Both execution paths (container and LLM-only) create/reuse a chat session and store messages, so results appear in the Chat UI.
 - **Console proxy for API calls**: All frontend API calls go through the OpenShift console proxy (`/api/proxy/plugin/openshift-skills-plugin/backend/...`), requiring CSRF tokens.
 - **MaaS two-step auth**: Bearer token → `POST /v1/tokens` → session token. Session token used for all subsequent API calls.
-- **Model name from URL**: Inference endpoints expect the URL path segment as model name (e.g. `llama-32-3b`), not the registry ID (e.g. `RedHatAI/llama-3.2-3b-instruct`).
+- **Two endpoint types**: Supports both model registries (multi-model, lists via `/v1/models`) and single-model OpenAI-compatible URLs (auto-detected by path pattern). Single-model URLs have the model name before `/v1` in the path.
+- **Model name extraction**: `ExtractModelName()` strips `/v1` suffix before taking the last path segment, preventing "v1" from being used as the model name. The actual model ID is confirmed via `GET /v1/models` API call when available.
+- **Per-session skills**: Each chat session can have specific skills selected via the `session_skills` junction table. New chats pre-select all enabled skills. Skills can be changed on an active session via the expandable skills bar. If no skills are explicitly selected (e.g. old sessions), falls back to loading all enabled skills.
+- **Multi-turn chat context**: `SendMessage` passes full conversation history from the DB to `RunAgentLoop` via `AgentOptions.History`, giving the LLM multi-turn context within a session while keeping sessions isolated from each other.
 - **Token security**: API keys are never returned to the frontend. `ScheduledTask.APIKey` uses `json:"-"`, `ListEndpoints` returns `"****"`, Settings UI shows "Configured"/"Not set".
 - **Database portability**: Export/import of the SQLite database file via Settings page for migrating config between clusters. Import triggers `Reinit()` + `ReloadScheduler()`.
 - **No `<Page>` wrapper**: Console layout provides its own wrapper; adding `<Page>` causes a grey gap.

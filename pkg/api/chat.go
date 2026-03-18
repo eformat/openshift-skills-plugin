@@ -71,9 +71,20 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 		chatMessages = append(chatMessages, m)
 	}
 
-	// Build system prompt with enabled skills
+	// Build system prompt with session-specific skills (or all enabled skills if none selected)
 	systemPrompt := sess.SystemPrompt
-	skillRows, err := db.Query("SELECT name, content FROM skills WHERE enabled = 1")
+	var skillCount int
+	db.QueryRow("SELECT COUNT(*) FROM session_skills WHERE session_id = ?", sessionID).Scan(&skillCount)
+
+	var skillQuery string
+	var skillArgs []interface{}
+	if skillCount > 0 {
+		skillQuery = "SELECT s.name, s.content FROM skills s JOIN session_skills ss ON s.id = ss.skill_id WHERE ss.session_id = ? AND s.enabled = 1"
+		skillArgs = []interface{}{sessionID}
+	} else {
+		skillQuery = "SELECT name, content FROM skills WHERE enabled = 1"
+	}
+	skillRows, err := db.Query(skillQuery, skillArgs...)
 	if err == nil {
 		defer skillRows.Close()
 		for skillRows.Next() {
@@ -118,11 +129,7 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Extract model name from URL
-	modelName := sess.Model
-	trimmedURL := strings.TrimRight(baseURL, "/")
-	if idx := strings.LastIndex(trimmedURL, "/"); idx >= 0 {
-		modelName = trimmedURL[idx+1:]
-	}
+	modelName := maas.ExtractModelName(baseURL, sess.Model)
 
 	// Use agent loop with shell tool access
 	agentSystemPrompt := `You are an AI agent running on an OpenShift cluster.
@@ -134,7 +141,16 @@ Only report what the commands actually return.`
 		agentSystemPrompt += "\n\n" + systemPrompt
 	}
 
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, nil)
+	// Convert conversation history (excluding the current user message, which is the last one)
+	// so the agent has multi-turn context within this session.
+	var history []agent.ChatMessage
+	if len(chatMessages) > 1 {
+		for _, m := range chatMessages[:len(chatMessages)-1] {
+			history = append(history, agent.ChatMessage{Role: m.Role, Content: m.Content})
+		}
+	}
+
+	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, &agent.AgentOptions{History: history})
 	if err != nil {
 		log.Printf("Agent error: %v", err)
 		httpError(w, http.StatusBadGateway, "agent execution failed: "+err.Error())
@@ -202,9 +218,20 @@ func WebSocketChat(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 
-		// Build system prompt
+		// Build system prompt with session-specific skills
 		systemPrompt := sess.SystemPrompt
-		skillRows, err := db.Query("SELECT name, content FROM skills WHERE enabled = 1")
+		var wsSkillCount int
+		db.QueryRow("SELECT COUNT(*) FROM session_skills WHERE session_id = ?", sessionID).Scan(&wsSkillCount)
+
+		var wsSkillQuery string
+		var wsSkillArgs []interface{}
+		if wsSkillCount > 0 {
+			wsSkillQuery = "SELECT s.name, s.content FROM skills s JOIN session_skills ss ON s.id = ss.skill_id WHERE ss.session_id = ? AND s.enabled = 1"
+			wsSkillArgs = []interface{}{sessionID}
+		} else {
+			wsSkillQuery = "SELECT name, content FROM skills WHERE enabled = 1"
+		}
+		skillRows, err := db.Query(wsSkillQuery, wsSkillArgs...)
 		if err == nil {
 			for skillRows.Next() {
 				var name, content string

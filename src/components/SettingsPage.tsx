@@ -85,7 +85,7 @@ export default function SettingsPage() {
 
   const handleHealthCheck = async (id: number) => {
     try {
-      const result = await healthCheckEndpoint(id);
+      const result = await healthCheckEndpoint(id) as any;
       setHealthStatus(prev => ({ ...prev, [id]: result }));
     } catch (e: any) {
       setHealthStatus(prev => ({ ...prev, [id]: { healthy: false, error: e.message } }));
@@ -182,11 +182,23 @@ export default function SettingsPage() {
                       <DescriptionListTerm>API Key</DescriptionListTerm>
                       <DescriptionListDescription>{ep.api_key ? 'Configured' : 'Not set'}</DescriptionListDescription>
                     </DescriptionListGroup>
+                    {ep.single_model && (
+                      <DescriptionListGroup>
+                        <DescriptionListTerm>Type</DescriptionListTerm>
+                        <DescriptionListDescription>
+                          <Label color="blue">Single model: {ep.model_name}</Label>
+                        </DescriptionListDescription>
+                      </DescriptionListGroup>
+                    )}
                   </DescriptionList>
                   {healthStatus[ep.id] !== undefined && healthStatus[ep.id] !== null && (
                     <Alert
                       variant={healthStatus[ep.id].healthy ? 'success' : 'danger'}
-                      title={healthStatus[ep.id].healthy ? 'Endpoint is healthy' : 'Endpoint unreachable'}
+                      title={healthStatus[ep.id].healthy
+                        ? ((healthStatus[ep.id] as any).single_model
+                          ? `Single OpenAI-compatible model endpoint OK (model: ${(healthStatus[ep.id] as any).model_name})`
+                          : 'Endpoint is healthy')
+                        : 'Endpoint unreachable'}
                       isInline
                       className="pf-v6-u-mt-sm"
                     >
@@ -241,10 +253,10 @@ export default function SettingsPage() {
             <TextInput id="ep-name" value={name} onChange={(_e, v) => setName(v)} placeholder="My MaaS Endpoint" />
           </FormGroup>
           <FormGroup label="URL" isRequired fieldId="ep-url">
-            <TextInput id="ep-url" value={url} onChange={(_e, v) => setUrl(v)} placeholder="https://model-server.example.com/v1" />
+            <TextInput id="ep-url" value={url} onChange={(_e, v) => setUrl(v)} placeholder="https://maas.example.com/maas-api orhttps://model.example.com/v1" />
             <FormHelperText>
               <HelperText>
-                <HelperTextItem>OpenAI-compatible /v1 base URL</HelperTextItem>
+                <HelperTextItem>MaaS API or OpenAI-compatible /v1 base URL</HelperTextItem>
               </HelperText>
             </FormHelperText>
           </FormGroup>

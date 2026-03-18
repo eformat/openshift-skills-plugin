@@ -11,10 +11,15 @@ import (
 )
 
 type createSessionRequest struct {
-	Provider     string `json:"provider"`
-	Model        string `json:"model"`
-	BaseURL      string `json:"base_url,omitempty"`
-	SystemPrompt string `json:"system_prompt,omitempty"`
+	Provider     string  `json:"provider"`
+	Model        string  `json:"model"`
+	BaseURL      string  `json:"base_url,omitempty"`
+	SystemPrompt string  `json:"system_prompt,omitempty"`
+	SkillIDs     []int64 `json:"skill_ids,omitempty"`
+}
+
+type updateSessionSkillsRequest struct {
+	SkillIDs []int64 `json:"skill_ids"`
 }
 
 func CreateSession(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +41,12 @@ func CreateSession(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Associate selected skills
+	for _, skillID := range req.SkillIDs {
+		db.Exec("INSERT INTO session_skills (session_id, skill_id) VALUES (?, ?)", id, skillID)
+	}
+
 	jsonResponse(w, map[string]string{"id": id, "name": name})
 }
 
@@ -94,15 +105,57 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 		messages = append(messages, m)
 	}
 
+	// Fetch associated skill IDs
+	skillIDs := []int64{}
+	skillRows, err := db.Query("SELECT skill_id FROM session_skills WHERE session_id = ?", id)
+	if err == nil {
+		defer skillRows.Close()
+		for skillRows.Next() {
+			var sid int64
+			if err := skillRows.Scan(&sid); err == nil {
+				skillIDs = append(skillIDs, sid)
+			}
+		}
+	}
+
 	jsonResponse(w, map[string]interface{}{
-		"session":  s,
-		"messages": messages,
+		"session":   s,
+		"messages":  messages,
+		"skill_ids": skillIDs,
 	})
+}
+
+func UpdateSessionSkills(w http.ResponseWriter, r *http.Request) {
+	id := mux.Vars(r)["id"]
+	var req updateSessionSkillsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		httpError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	db := database.GetDB()
+
+	// Verify session exists
+	var exists int
+	err := db.QueryRow("SELECT COUNT(*) FROM sessions WHERE id = ?", id).Scan(&exists)
+	if err != nil || exists == 0 {
+		httpError(w, http.StatusNotFound, "session not found")
+		return
+	}
+
+	// Replace all skill associations
+	db.Exec("DELETE FROM session_skills WHERE session_id = ?", id)
+	for _, skillID := range req.SkillIDs {
+		db.Exec("INSERT INTO session_skills (session_id, skill_id) VALUES (?, ?)", id, skillID)
+	}
+
+	jsonResponse(w, map[string]string{"message": "skills updated"})
 }
 
 func DeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := mux.Vars(r)["id"]
 	db := database.GetDB()
+	db.Exec("DELETE FROM session_skills WHERE session_id = ?", id)
 	db.Exec("DELETE FROM messages WHERE session_id = ?", id)
 	db.Exec("DELETE FROM sessions WHERE id = ?", id)
 	jsonResponse(w, map[string]string{"message": "session deleted"})

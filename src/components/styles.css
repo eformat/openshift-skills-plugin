@@ -5,6 +5,13 @@
   padding-right: 16px;
 }
 
+.skills-sidebar .pf-v6-c-nav__link.pf-m-current,
+.skills-sidebar .pf-v6-c-nav__item.pf-m-current > .pf-v6-c-nav__link {
+  background-color: var(--pf-t--global--color--brand--default, #0066cc);
+  color: #fff;
+  border-radius: 4px;
+}
+
 .chat-container {
   display: flex;
   flex-direction: column;
@@ -154,6 +161,19 @@
   border: none;
   border-top: 1px solid rgba(0, 0, 0, 0.15);
   margin: 0.75em 0;
+}
+
+.chat-skills-bar {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--pf-t--global--border--color--default, #d2d2d2);
+  background: var(--pf-t--global--background--color--secondary--default, #f5f5f5);
+}
+
+.chat-skills-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
 }
 
 .chat-input-bar {

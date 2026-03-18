@@ -76,10 +76,12 @@ export interface Message {
 }
 
 export const listSessions = () => request<Session[]>('/sessions');
-export const createSession = (data: { provider: string; model: string; base_url?: string }) =>
+export const createSession = (data: { provider: string; model: string; base_url?: string; skill_ids?: number[] }) =>
   request<{ id: string; name: string }>('/sessions', { method: 'POST', body: JSON.stringify(data) });
 export const getSession = (id: string) =>
-  request<{ session: Session; messages: Message[] }>('/sessions/' + id);
+  request<{ session: Session; messages: Message[]; skill_ids: number[] }>('/sessions/' + id);
+export const updateSessionSkills = (id: string, skillIds: number[]) =>
+  request('/sessions/' + id + '/skills', { method: 'PUT', body: JSON.stringify({ skill_ids: skillIds }) });
 export const deleteSession = (id: string) =>
   request('/sessions/' + id, { method: 'DELETE' });
 
@@ -143,6 +145,8 @@ export interface MaaSEndpoint {
   api_key?: string;
   provider_type: string;
   enabled: boolean;
+  single_model?: boolean;
+  model_name?: string;
   created_at: string;
 }
 

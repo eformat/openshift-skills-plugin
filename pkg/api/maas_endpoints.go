@@ -26,7 +26,12 @@ func ListEndpoints(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	endpoints := []database.MaaSEndpoint{}
+	type endpointResponse struct {
+		database.MaaSEndpoint
+		SingleModel bool   `json:"single_model"`
+		ModelName   string `json:"model_name,omitempty"`
+	}
+	endpoints := []endpointResponse{}
 	for rows.Next() {
 		var e database.MaaSEndpoint
 		var enabled int
@@ -39,7 +44,12 @@ func ListEndpoints(w http.ResponseWriter, r *http.Request) {
 		if e.APIKey != "" {
 			e.APIKey = "****"
 		}
-		endpoints = append(endpoints, e)
+		ep := endpointResponse{MaaSEndpoint: e}
+		if maas.IsSingleModelURL(e.URL) {
+			ep.SingleModel = true
+			ep.ModelName = maas.ModelNameFromURL(e.URL)
+		}
+		endpoints = append(endpoints, ep)
 	}
 	jsonResponse(w, endpoints)
 }
@@ -111,12 +121,24 @@ func ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := maas.NewClient("", url, apiKey, "")
+
+	// Check if this looks like a single-model OpenAI-compatible URL
+	if maas.IsSingleModelURL(url) {
+		models, err := client.ListSingleModel(url)
+		if err != nil {
+			httpError(w, http.StatusBadGateway, "failed to query model: "+err.Error())
+			return
+		}
+		jsonResponse(w, models)
+		return
+	}
+
+	// Otherwise treat as a model registry
 	models, err := client.ListModels()
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "failed to list models: "+err.Error())
 		return
 	}
-	// Return enriched model info including per-model URLs
 	jsonResponse(w, models)
 }
 
@@ -132,9 +154,19 @@ func HealthCheckEndpoint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := maas.NewClient("", url, apiKey, "")
-	if err := client.HealthCheck(); err != nil {
-		jsonResponse(w, map[string]interface{}{"healthy": false, "error": err.Error()})
+
+	if maas.IsSingleModelURL(url) {
+		if err := client.HealthCheckSingleModel(url); err != nil {
+			jsonResponse(w, map[string]any{"healthy": false, "error": err.Error()})
+			return
+		}
+		jsonResponse(w, map[string]any{"healthy": true, "single_model": true, "model_name": maas.ModelNameFromURL(url)})
 		return
 	}
-	jsonResponse(w, map[string]interface{}{"healthy": true})
+
+	if err := client.HealthCheck(); err != nil {
+		jsonResponse(w, map[string]any{"healthy": false, "error": err.Error()})
+		return
+	}
+	jsonResponse(w, map[string]any{"healthy": true})
 }

@@ -140,11 +140,7 @@ func (c *Client) Complete(messages []ChatMessage, systemPrompt string) (string, 
 
 	// The inference endpoint expects the model name as the last path segment of the URL,
 	// not the registry ID (e.g. "llama-32-3b" not "RedHatAI/llama-3.2-3b-instruct").
-	model := c.Model
-	trimmed := strings.TrimRight(c.BaseURL, "/")
-	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
-		model = trimmed[idx+1:]
-	}
+	model := ExtractModelName(c.BaseURL, c.Model)
 
 	req := ChatRequest{
 		Model:       model,
@@ -269,7 +265,128 @@ func (c *Client) GetToken() string {
 	return c.token
 }
 
+// IsSingleModelURL returns true if the URL looks like a direct OpenAI-compatible
+// model endpoint (e.g. http://host/path/llama-32-3b/v1) rather than a model registry.
+// Pattern: URL ends with /v1 (or /v1/) and has at least one path segment before it.
+func IsSingleModelURL(rawURL string) bool {
+	trimmed := strings.TrimRight(rawURL, "/")
+	if !strings.HasSuffix(trimmed, "/v1") {
+		return false
+	}
+	// Strip /v1 and check there's a non-trivial path before it
+	base := strings.TrimSuffix(trimmed, "/v1")
+	// Must have a scheme and at least one path segment
+	if idx := strings.Index(base, "://"); idx >= 0 {
+		afterScheme := base[idx+3:]
+		// Check there's a path after the host
+		if slashIdx := strings.Index(afterScheme, "/"); slashIdx >= 0 {
+			path := afterScheme[slashIdx+1:]
+			return path != "" // has path segments before /v1
+		}
+	}
+	return false
+}
+
+// ModelNameFromURL extracts the model name from a single-model URL.
+// e.g. http://host/prelude-maas/llama-32-3b/v1 → llama-32-3b
+func ModelNameFromURL(rawURL string) string {
+	trimmed := strings.TrimRight(rawURL, "/")
+	trimmed = strings.TrimSuffix(trimmed, "/v1")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		return trimmed[idx+1:]
+	}
+	return trimmed
+}
+
+// ExtractModelName extracts the model name from a URL for use in API requests.
+// For single-model URLs (.../llama-32-3b/v1), strips /v1 first then takes last segment.
+// For registry-style URLs (.../prelude-maas/llama-32-3b), takes last segment directly.
+// Falls back to the provided default if extraction fails.
+func ExtractModelName(rawURL, fallback string) string {
+	trimmed := strings.TrimRight(rawURL, "/")
+	// Strip /v1 suffix if present so we don't return "v1" as the model name
+	trimmed = strings.TrimSuffix(trimmed, "/v1")
+	if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+		name := trimmed[idx+1:]
+		if name != "" {
+			return name
+		}
+	}
+	return fallback
+}
+
+// ListSingleModel queries a single-model OpenAI-compatible endpoint for its model info.
+// It hits {url}/models and returns the model(s) found, or synthesizes one from the URL.
+func (c *Client) ListSingleModel(url string) ([]ModelInfo, error) {
+	modelsURL := strings.TrimRight(url, "/") + "/models"
+
+	httpReq, err := http.NewRequest("GET", modelsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	if c.token != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("do request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusOK {
+		var modelsResp ModelsResponse
+		if err := json.Unmarshal(body, &modelsResp); err == nil && len(modelsResp.Data) > 0 {
+			models := make([]ModelInfo, 0, len(modelsResp.Data))
+			for _, m := range modelsResp.Data {
+				if m.ID == "" {
+					continue
+				}
+				inferURL := strings.TrimRight(url, "/")
+				models = append(models, ModelInfo{
+					ID:          m.ID,
+					URL:         inferURL,
+					DisplayName: m.ID,
+					Ready:       true,
+					OwnedBy:     m.OwnedBy,
+				})
+			}
+			if len(models) > 0 {
+				return models, nil
+			}
+		}
+	}
+
+	// Fall back to synthesizing from the URL
+	modelName := ModelNameFromURL(url)
+	inferURL := strings.TrimRight(url, "/")
+	return []ModelInfo{
+		{
+			ID:          modelName,
+			URL:         inferURL,
+			DisplayName: modelName,
+			Ready:       true,
+			OwnedBy:     "unknown",
+		},
+	}, nil
+}
+
 func (c *Client) HealthCheck() error {
 	_, err := c.ListModels()
+	return err
+}
+
+// HealthCheckSingleModel checks a single-model endpoint by querying its /models path.
+func (c *Client) HealthCheckSingleModel(url string) error {
+	_, err := c.ListSingleModel(url)
 	return err
 }

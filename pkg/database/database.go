@@ -173,6 +173,11 @@ func migrate(db *sql.DB) error {
 			enabled INTEGER DEFAULT 1,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_skills (
+			session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+			skill_id INTEGER NOT NULL REFERENCES skills(id) ON DELETE CASCADE,
+			PRIMARY KEY (session_id, skill_id)
+		)`,
 		`CREATE TABLE IF NOT EXISTS config (
 			key TEXT PRIMARY KEY,
 			value TEXT NOT NULL

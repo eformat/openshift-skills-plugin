@@ -235,11 +235,7 @@ func executeContainerTask(db *sql.DB, historyID int64, startTime time.Time, task
 	}
 
 	// Extract model name from URL
-	modelName := task.Model
-	trimmedURL := strings.TrimRight(baseURL, "/")
-	if idx := strings.LastIndex(trimmedURL, "/"); idx >= 0 {
-		modelName = trimmedURL[idx+1:]
-	}
+	modelName := maas.ExtractModelName(baseURL, task.Model)
 
 	// Build system prompt
 	systemPrompt := `You are an AI agent executing a scheduled skill inside a container on an OpenShift cluster.
@@ -364,11 +360,7 @@ When you have completed all the steps, provide a final summary of the results.`
 	}
 
 	// Extract model name from URL (last path segment)
-	modelName := task.Model
-	trimmedURL := strings.TrimRight(baseURL, "/")
-	if idx := strings.LastIndex(trimmedURL, "/"); idx >= 0 {
-		modelName = trimmedURL[idx+1:]
-	}
+	modelName := maas.ExtractModelName(baseURL, task.Model)
 
 	// Run the agent loop
 	log.Printf("Starting agent loop for task %d (%s) with model %s", taskID, task.Name, modelName)
