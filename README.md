@@ -2,11 +2,15 @@
 
 An OpenShift Console Plugin that manages SKILLS.
 
-As cluster-admin
+  ![demo/skills-menu.png](demo/skills-menu.png)
+
+To install as a cluster-admin
 
 ```bash
 helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 ```
+
+  ![demo/skills-console-plugin.png](demo/skills-console-plugin.png)
 
 ## Simple Demo
 
