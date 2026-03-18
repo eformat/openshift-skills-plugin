@@ -78,13 +78,13 @@ var agentTools = []Tool{
 		Type: "function",
 		Function: ToolFunction{
 			Name:        "shell",
-			Description: "Execute a shell command and return stdout/stderr. Use this to run oc, kubectl, curl, or any CLI command to inspect or interact with the cluster.",
+			Description: "Execute a shell command and return stdout/stderr. Use this to run oc, kubectl, curl, or any CLI command. IMPORTANT: For multi-line scripts or commands with quotes/special characters, write the script to a temp file first using a heredoc (cat > /tmp/script.sh << 'SCRIPT'\\n...\\nSCRIPT) then run it with sh /tmp/script.sh. This avoids JSON escaping issues.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"command": map[string]interface{}{
 						"type":        "string",
-						"description": "The shell command to execute",
+						"description": "The shell command to execute. For complex multi-line scripts, write to a temp file first.",
 					},
 				},
 				"required": []string{"command"},
@@ -242,8 +242,15 @@ func executeToolCall(tc ToolCall, shellExec ShellExecutor) string {
 		var args struct {
 			Command string `json:"command"`
 		}
-		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-			return fmt.Sprintf("Error parsing arguments: %v", err)
+		rawArgs := tc.Function.Arguments
+		if err := json.Unmarshal([]byte(rawArgs), &args); err != nil {
+			// Try to repair truncated/malformed JSON from the LLM
+			repaired := repairToolCallJSON(rawArgs)
+			if repairErr := json.Unmarshal([]byte(repaired), &args); repairErr != nil {
+				log.Printf("Failed to parse tool call arguments (original: %s, repaired: %s): %v", truncate(rawArgs, 200), truncate(repaired, 200), repairErr)
+				return fmt.Sprintf("Error parsing arguments: %v. The command JSON was malformed. Please use simpler commands or write scripts to a temp file.", err)
+			}
+			log.Printf("Repaired malformed tool call JSON")
 		}
 		if args.Command == "" {
 			return "Error: no command provided"
@@ -293,6 +300,83 @@ func executeLocalShell(command string) string {
 		return "Command completed with no output"
 	}
 	return strings.Join(result, "\n")
+}
+
+// repairToolCallJSON attempts to fix common JSON issues in LLM-generated tool call arguments.
+// Models often produce truncated or improperly escaped JSON, especially for multi-line shell commands.
+func repairToolCallJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+
+	// If it already parses, return as-is
+	var test json.RawMessage
+	if json.Unmarshal([]byte(raw), &test) == nil {
+		return raw
+	}
+
+	// Try to extract the command value using a regex approach
+	// Match {"command": " then capture everything until we can't parse anymore
+	cmdPrefix := `"command"`
+	idx := strings.Index(raw, cmdPrefix)
+	if idx < 0 {
+		return raw
+	}
+
+	// Find the opening quote of the value
+	afterKey := raw[idx+len(cmdPrefix):]
+	colonIdx := strings.Index(afterKey, ":")
+	if colonIdx < 0 {
+		return raw
+	}
+	afterColon := strings.TrimSpace(afterKey[colonIdx+1:])
+	if len(afterColon) == 0 || afterColon[0] != '"' {
+		return raw
+	}
+
+	// Extract the string value, handling escapes manually
+	var command strings.Builder
+	i := 1 // skip opening quote
+	for i < len(afterColon) {
+		ch := afterColon[i]
+		if ch == '\\' && i+1 < len(afterColon) {
+			next := afterColon[i+1]
+			switch next {
+			case '"', '\\', '/':
+				command.WriteByte(next)
+			case 'n':
+				command.WriteByte('\n')
+			case 't':
+				command.WriteByte('\t')
+			case 'r':
+				command.WriteByte('\r')
+			default:
+				command.WriteByte('\\')
+				command.WriteByte(next)
+			}
+			i += 2
+			continue
+		}
+		if ch == '"' {
+			// Check if this is the real closing quote (followed by } or whitespace+})
+			rest := strings.TrimSpace(afterColon[i+1:])
+			if rest == "" || rest[0] == '}' || rest[0] == ',' {
+				break
+			}
+			// Otherwise it's an unescaped quote in the middle — include it
+			command.WriteByte(ch)
+			i++
+			continue
+		}
+		command.WriteByte(ch)
+		i++
+	}
+
+	// Rebuild valid JSON
+	cmdStr := command.String()
+	rebuilt, err := json.Marshal(map[string]string{"command": cmdStr})
+	if err != nil {
+		return raw
+	}
+	return string(rebuilt)
 }
 
 var thinkTagRegex = regexp.MustCompile(`(?s)<think>.*?</think>`)

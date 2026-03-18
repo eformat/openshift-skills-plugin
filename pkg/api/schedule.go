@@ -299,6 +299,7 @@ You have access to the 'shell' tool to execute commands inside the container.
 Execute the skill instructions step by step using real commands.
 Analyze the actual command output to provide an accurate report.
 Do NOT fabricate or hallucinate results - only report what the commands actually return.
+IMPORTANT: For multi-line scripts or commands containing quotes, write the script to a temp file using a heredoc (cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT) then run sh /tmp/script.sh.
 When you have completed all the steps, provide a final summary of the results.`
 	if skillContent != "" {
 		systemPrompt += "\n\n# Skill: " + skillName + "\n" + skillContent
@@ -387,6 +388,7 @@ Use 'oc' and 'kubectl' commands to interact with the cluster.
 Execute the skill instructions step by step using real commands.
 Analyze the actual command output to provide an accurate report.
 Do NOT fabricate or hallucinate results - only report what the commands actually return.
+IMPORTANT: For multi-line scripts or commands containing quotes, write the script to a temp file using a heredoc (cat > /tmp/script.sh << 'SCRIPT' ... SCRIPT) then run sh /tmp/script.sh.
 When you have completed all the steps, provide a final summary of the results.`
 	if skillContent != "" {
 		systemPrompt += "\n\n# Skill: " + skillName + "\n" + skillContent

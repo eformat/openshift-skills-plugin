@@ -136,7 +136,12 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 You have access to the 'shell' tool to execute commands.
 Use 'oc' and 'kubectl' commands to interact with the cluster.
 Execute commands to get real data - do NOT fabricate or hallucinate results.
-Only report what the commands actually return.`
+Only report what the commands actually return.
+IMPORTANT: For multi-line scripts or commands containing quotes, write the script to a temp file first using a heredoc, then execute it. Example: cat > /tmp/script.sh << 'SCRIPT'
+#!/bin/sh
+for pod in $(oc get pods -o name); do echo "$pod"; done
+SCRIPT
+sh /tmp/script.sh`
 	if systemPrompt != "" {
 		agentSystemPrompt += "\n\n" + systemPrompt
 	}
