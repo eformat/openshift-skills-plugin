@@ -1,6 +1,6 @@
 # Openshift Skills Plugin
 
-An OpenShift Console Plugin that manages SKILLS.
+An OpenShift Console Plugin that manages SKILLS as Kubernetes Jobs.
 
   ![demo/skills-menu.png](demo/skills-menu.png)
 
