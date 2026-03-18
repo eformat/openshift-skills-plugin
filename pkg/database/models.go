@@ -49,6 +49,8 @@ type ScheduledTask struct {
 	BaseURL        string     `json:"base_url,omitempty"`
 	APIKey         string     `json:"-"`
 	ContainerImage string    `json:"container_image,omitempty"`
+	Temperature    float64   `json:"temperature"`
+	MaxTokens      int       `json:"max_tokens"`
 	CreatedAt      time.Time  `json:"created_at"`
 	UpdatedAt      time.Time  `json:"updated_at"`
 }

@@ -48,6 +48,33 @@ func StopScheduler() {
 	}
 }
 
+// ReloadScheduler stops all existing cron jobs and reloads from the database.
+func ReloadScheduler() {
+	// Remove all existing entries
+	for taskID := range cronEntries {
+		cronScheduler.Remove(cronEntries[taskID])
+		delete(cronEntries, taskID)
+	}
+
+	// Reload from database
+	db := database.GetDB()
+	rows, err := db.Query("SELECT id, schedule FROM scheduled_tasks WHERE enabled = 1")
+	if err != nil {
+		log.Printf("Failed to reload scheduled tasks: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id int64
+		var schedule string
+		if err := rows.Scan(&id, &schedule); err == nil {
+			addCronJob(id, schedule)
+		}
+	}
+	log.Println("Scheduler reloaded")
+}
+
 func addCronJob(taskID int64, schedule string) {
 	entryID, err := cronScheduler.AddFunc(schedule, func() {
 		executeScheduledTask(taskID)
@@ -84,27 +111,31 @@ func loadSessionMessages(db *sql.DB, sessionID string) []maas.ChatMessage {
 
 func executeScheduledTask(taskID int64) {
 	db := database.GetDB()
-	startTime := time.Now()
 
+	// Check if the task exists and is enabled before creating any history
+	var task database.ScheduledTask
+	var skillID sql.NullInt64
+	var sessionID sql.NullString
+	err := db.QueryRow(`SELECT id, name, COALESCE(description,''), skill_id, schedule, service_account, namespace,
+		provider, model, COALESCE(base_url,''), COALESCE(api_key,''), COALESCE(container_image,''),
+		COALESCE(temperature, 0.7), COALESCE(max_tokens, 0), session_id
+		FROM scheduled_tasks WHERE id = ? AND enabled = 1`, taskID).
+		Scan(&task.ID, &task.Name, &task.Description, &skillID, &task.Schedule, &task.ServiceAccount,
+			&task.Namespace, &task.Provider, &task.Model, &task.BaseURL, &task.APIKey, &task.ContainerImage,
+			&task.Temperature, &task.MaxTokens, &sessionID)
+	if err != nil {
+		// Task not found or disabled — skip silently
+		log.Printf("Skipping task %d: not found or disabled", taskID)
+		return
+	}
+
+	startTime := time.Now()
 	result, err := db.Exec("INSERT INTO task_execution_history (task_id, started_at, status) VALUES (?, ?, 'running')", taskID, startTime)
 	if err != nil {
 		log.Printf("Failed to create execution history for task %d: %v", taskID, err)
 		return
 	}
 	historyID, _ := result.LastInsertId()
-
-	var task database.ScheduledTask
-	var skillID sql.NullInt64
-	var sessionID sql.NullString
-	err = db.QueryRow(`SELECT id, name, COALESCE(description,''), skill_id, schedule, service_account, namespace,
-		provider, model, COALESCE(base_url,''), COALESCE(api_key,''), COALESCE(container_image,''), session_id
-		FROM scheduled_tasks WHERE id = ? AND enabled = 1`, taskID).
-		Scan(&task.ID, &task.Name, &task.Description, &skillID, &task.Schedule, &task.ServiceAccount,
-			&task.Namespace, &task.Provider, &task.Model, &task.BaseURL, &task.APIKey, &task.ContainerImage, &sessionID)
-	if err != nil {
-		updateHistory(db, historyID, startTime, "failed", "task not found or disabled", "")
-		return
-	}
 
 	var skillContent, skillName string
 	if skillID.Valid {
@@ -223,7 +254,7 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	message := "Execute the scheduled task: " + task.Name
 	if task.Description != "" {
-		message += "\n\nDescription: " + task.Description
+		message += "\n\nPrompt: " + task.Description
 	}
 
 	// Store the user message in chat
@@ -240,7 +271,7 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	// Run the agent loop with commands executing in the pod
 	log.Printf("Starting agent loop for container task %d (%s) in pod %s/%s", taskID, task.Name, ep.Namespace, ep.Name)
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, shellExec)
+	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, shellExec, &agent.AgentOptions{Temperature: task.Temperature, MaxTokens: task.MaxTokens})
 	if err != nil {
 		updateHistory(db, historyID, startTime, "failed", err.Error(), "")
 		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, "Error: "+err.Error())
@@ -311,7 +342,7 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	message := "Execute the scheduled task: " + task.Name
 	if task.Description != "" {
-		message += "\n\nDescription: " + task.Description
+		message += "\n\nPrompt: " + task.Description
 	}
 
 	db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", sid, "[Scheduled] "+message)
@@ -341,7 +372,7 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	// Run the agent loop
 	log.Printf("Starting agent loop for task %d (%s) with model %s", taskID, task.Name, modelName)
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, nil)
+	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, nil, &agent.AgentOptions{Temperature: task.Temperature, MaxTokens: task.MaxTokens})
 	if err != nil {
 		updateHistory(db, historyID, startTime, "failed", err.Error(), "")
 		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, "Error: "+err.Error())
@@ -360,24 +391,27 @@ When you have completed all the steps, provide a final summary of the results.`
 }
 
 type createScheduledTaskRequest struct {
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	SkillID        *int64 `json:"skill_id"`
-	Schedule       string `json:"schedule"`
-	ServiceAccount string `json:"service_account"`
-	Namespace      string `json:"namespace"`
-	Provider       string `json:"provider"`
-	Model          string `json:"model"`
-	BaseURL        string `json:"base_url"`
-	APIKey         string `json:"api_key"`
-	ContainerImage string `json:"container_image"`
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	SkillID        *int64  `json:"skill_id"`
+	Schedule       string  `json:"schedule"`
+	ServiceAccount string  `json:"service_account"`
+	Namespace      string  `json:"namespace"`
+	Provider       string  `json:"provider"`
+	Model          string  `json:"model"`
+	BaseURL        string  `json:"base_url"`
+	APIKey         string  `json:"api_key"`
+	ContainerImage string  `json:"container_image"`
+	Temperature    float64 `json:"temperature"`
+	MaxTokens      int     `json:"max_tokens"`
 }
 
 func ListScheduledTasks(w http.ResponseWriter, r *http.Request) {
 	db := database.GetDB()
 	rows, err := db.Query(`SELECT id, name, COALESCE(description,''), skill_id, schedule, service_account, namespace,
 		enabled, last_run, next_run, run_count, session_id, provider, model, COALESCE(base_url,''),
-		COALESCE(container_image,''), created_at, updated_at FROM scheduled_tasks ORDER BY name`)
+		COALESCE(container_image,''), COALESCE(temperature, 0.7), COALESCE(max_tokens, 0),
+		created_at, updated_at FROM scheduled_tasks ORDER BY name`)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -393,7 +427,8 @@ func ListScheduledTasks(w http.ResponseWriter, r *http.Request) {
 		var enabled int
 		if err := rows.Scan(&t.ID, &t.Name, &t.Description, &skillID, &t.Schedule, &t.ServiceAccount,
 			&t.Namespace, &enabled, &lastRun, &nextRun, &t.RunCount, &sessionID,
-			&t.Provider, &t.Model, &t.BaseURL, &t.ContainerImage, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			&t.Provider, &t.Model, &t.BaseURL, &t.ContainerImage, &t.Temperature, &t.MaxTokens,
+			&t.CreatedAt, &t.UpdatedAt); err != nil {
 			httpError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -443,10 +478,13 @@ func CreateScheduledTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	db := database.GetDB()
-	result, err := db.Exec(`INSERT INTO scheduled_tasks (name, description, skill_id, schedule, service_account, namespace, provider, model, base_url, api_key, container_image)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	if req.Temperature <= 0 {
+		req.Temperature = 0.7
+	}
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (name, description, skill_id, schedule, service_account, namespace, provider, model, base_url, api_key, container_image, temperature, max_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		req.Name, req.Description, req.SkillID, req.Schedule, req.ServiceAccount, req.Namespace,
-		req.Provider, req.Model, req.BaseURL, req.APIKey, req.ContainerImage)
+		req.Provider, req.Model, req.BaseURL, req.APIKey, req.ContainerImage, req.Temperature, req.MaxTokens)
 	if err != nil {
 		httpError(w, http.StatusConflict, err.Error())
 		return
@@ -475,10 +513,13 @@ func UpdateScheduledTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if req.Temperature <= 0 {
+		req.Temperature = 0.7
+	}
 	db.Exec(`UPDATE scheduled_tasks SET name=?, description=?, skill_id=?, schedule=?, service_account=?,
-		namespace=?, provider=?, model=?, base_url=?, api_key=?, container_image=?, updated_at=? WHERE id=?`,
+		namespace=?, provider=?, model=?, base_url=?, api_key=?, container_image=?, temperature=?, max_tokens=?, updated_at=? WHERE id=?`,
 		req.Name, req.Description, req.SkillID, req.Schedule, req.ServiceAccount, req.Namespace,
-		req.Provider, req.Model, req.BaseURL, req.APIKey, req.ContainerImage, now, id)
+		req.Provider, req.Model, req.BaseURL, req.APIKey, req.ContainerImage, req.Temperature, req.MaxTokens, now, id)
 
 	// Reschedule
 	removeCronJob(id)

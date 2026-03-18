@@ -24,6 +24,8 @@ import {
   NavItem,
   NavList,
 } from '@patternfly/react-core';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   listSessions,
   createSession,
@@ -195,7 +197,9 @@ export default function ChatPage() {
                           <span className="chat-message-role">{m.role}</span>
                           <span className="chat-message-time">{new Date(m.timestamp).toLocaleString()}</span>
                         </div>
-                        <div className="chat-message-content">{m.content}</div>
+                        <div className="chat-message-content">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                        </div>
                       </div>
                     ))}
                     {loading && <div className="chat-message chat-message-assistant"><Spinner size="md" /> Thinking...</div>}

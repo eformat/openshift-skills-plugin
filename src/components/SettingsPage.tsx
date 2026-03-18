@@ -35,6 +35,8 @@ import {
   updateEndpoint,
   deleteEndpoint,
   healthCheckEndpoint,
+  exportDatabase,
+  importDatabase,
   MaaSEndpoint,
 } from '../utils/api';
 
@@ -48,6 +50,9 @@ export default function SettingsPage() {
   const [apiKey, setApiKey] = React.useState('');
   const [providerType, setProviderType] = React.useState('openai-compatible');
   const [healthStatus, setHealthStatus] = React.useState<Record<number, { healthy: boolean; error?: string } | null>>({});
+  const [dbMessage, setDbMessage] = React.useState<{ type: 'success' | 'danger'; text: string } | null>(null);
+  const [importing, setImporting] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => { loadEndpoints(); }, []);
 
@@ -94,6 +99,33 @@ export default function SettingsPage() {
     setApiKey('');
     setProviderType(ep.provider_type);
     setShowEdit(true);
+  };
+
+  const handleExport = async () => {
+    try {
+      setDbMessage(null);
+      await exportDatabase();
+      setDbMessage({ type: 'success', text: 'Database exported successfully.' });
+    } catch (e: any) {
+      setDbMessage({ type: 'danger', text: 'Export failed: ' + e.message });
+    }
+  };
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setDbMessage(null);
+    try {
+      const result = await importDatabase(file);
+      setDbMessage({ type: 'success', text: result.message });
+      loadEndpoints();
+    } catch (e: any) {
+      setDbMessage({ type: 'danger', text: 'Import failed: ' + e.message });
+    }
+    setImporting(false);
+    // Reset file input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const resetForm = () => {
@@ -165,6 +197,36 @@ export default function SettingsPage() {
               </Card>
             ))
           )}
+        </PageSection>
+
+        <PageSection>
+          <Title headingLevel="h1">Database</Title>
+        </PageSection>
+        <PageSection>
+          <Card isCompact>
+            <CardBody>
+              <Split hasGutter>
+                <SplitItem>
+                  <Button variant="secondary" onClick={handleExport}>Export Database</Button>
+                </SplitItem>
+                <SplitItem>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept=".db,.sqlite,.sqlite3"
+                    style={{ display: 'none' }}
+                    onChange={handleImport}
+                  />
+                  <Button variant="secondary" onClick={() => fileInputRef.current?.click()} isLoading={importing} isDisabled={importing}>
+                    Import Database
+                  </Button>
+                </SplitItem>
+              </Split>
+              {dbMessage && (
+                <Alert variant={dbMessage.type} title={dbMessage.text} isInline className="pf-v6-u-mt-sm" />
+              )}
+            </CardBody>
+          </Card>
         </PageSection>
 
       {/* Create modal */}

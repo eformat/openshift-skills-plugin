@@ -134,7 +134,7 @@ Only report what the commands actually return.`
 		agentSystemPrompt += "\n\n" + systemPrompt
 	}
 
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil)
+	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, nil)
 	if err != nil {
 		log.Printf("Agent error: %v", err)
 		httpError(w, http.StatusBadGateway, "agent execution failed: "+err.Error())

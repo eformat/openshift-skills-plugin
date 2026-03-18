@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	db   *sql.DB
-	once sync.Once
+	db     *sql.DB
+	dbPath string
+	mu     sync.Mutex
+	once   sync.Once
 )
 
 func Init() (*sql.DB, error) {
@@ -27,7 +29,7 @@ func Init() (*sql.DB, error) {
 			initErr = fmt.Errorf("create data dir: %w", err)
 			return
 		}
-		dbPath := filepath.Join(dataDir, "skills.db")
+		dbPath = filepath.Join(dataDir, "skills.db")
 		var err error
 		db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
 		if err != nil {
@@ -46,6 +48,62 @@ func Init() (*sql.DB, error) {
 
 func GetDB() *sql.DB {
 	return db
+}
+
+func GetDBPath() string {
+	return dbPath
+}
+
+// Checkpoint flushes the WAL to the main database file.
+func Checkpoint() error {
+	_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
+}
+
+// Reinit closes the current DB, replaces the file, and reopens it.
+func Reinit(newDBPath string) error {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Close current connection
+	if db != nil {
+		db.Close()
+	}
+
+	// Replace the database file
+	src, err := os.Open(newDBPath)
+	if err != nil {
+		return fmt.Errorf("open new db: %w", err)
+	}
+	defer src.Close()
+
+	dst, err := os.Create(dbPath)
+	if err != nil {
+		return fmt.Errorf("create db file: %w", err)
+	}
+	defer dst.Close()
+
+	if _, err := dst.ReadFrom(src); err != nil {
+		return fmt.Errorf("copy db: %w", err)
+	}
+
+	// Remove any leftover WAL/SHM files from old DB
+	os.Remove(dbPath + "-wal")
+	os.Remove(dbPath + "-shm")
+
+	// Reopen
+	db, err = sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000")
+	if err != nil {
+		return fmt.Errorf("reopen database: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	if err := migrate(db); err != nil {
+		return fmt.Errorf("migrate after import: %w", err)
+	}
+
+	log.Printf("Database re-initialized from import")
+	return nil
 }
 
 func migrate(db *sql.DB) error {
@@ -121,6 +179,8 @@ func migrate(db *sql.DB) error {
 		)`,
 		// Migrations for existing tables
 		`ALTER TABLE scheduled_tasks ADD COLUMN container_image TEXT DEFAULT ''`,
+		`ALTER TABLE scheduled_tasks ADD COLUMN temperature REAL DEFAULT 0.7`,
+		`ALTER TABLE scheduled_tasks ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 	}
 	// ALTER TABLE will fail if column already exists, that's fine
 	for _, stmt := range statements {

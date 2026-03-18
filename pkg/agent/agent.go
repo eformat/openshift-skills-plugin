@@ -50,7 +50,14 @@ type ChatRequest struct {
 	Messages    []ChatMessage `json:"messages"`
 	Tools       []Tool        `json:"tools,omitempty"`
 	Temperature float64       `json:"temperature,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
 	Stream      bool          `json:"stream"`
+}
+
+// AgentOptions holds optional parameters for the agent loop.
+type AgentOptions struct {
+	Temperature float64
+	MaxTokens   int
 }
 
 type ChatChoice struct {
@@ -96,9 +103,20 @@ type ShellExecutor func(command string) string
 // 4. Repeat until done or max iterations
 //
 // If shellExec is nil, commands are executed locally via sh -c.
-func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor) (string, error) {
+func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (string, error) {
 	if maxIterations <= 0 {
 		maxIterations = 15
+	}
+
+	temperature := 0.7
+	maxTokens := 0
+	if opts != nil {
+		if opts.Temperature > 0 {
+			temperature = opts.Temperature
+		}
+		if opts.MaxTokens > 0 {
+			maxTokens = opts.MaxTokens
+		}
 	}
 
 	messages := []ChatMessage{
@@ -112,7 +130,7 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 		log.Printf("Agent iteration %d/%d, messages=%d", iteration+1, maxIterations, len(messages))
 
 		// Call LLM with tools
-		resp, err := callLLM(client, completionsURL, token, model, messages, agentTools)
+		resp, err := callLLM(client, completionsURL, token, model, messages, agentTools, temperature, maxTokens)
 		if err != nil {
 			return "", fmt.Errorf("iteration %d: LLM call failed: %w", iteration+1, err)
 		}
@@ -166,12 +184,13 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 	return "", fmt.Errorf("maximum iterations (%d) reached without completing the task", maxIterations)
 }
 
-func callLLM(client *http.Client, completionsURL, token, model string, messages []ChatMessage, tools []Tool) (*ChatResponse, error) {
+func callLLM(client *http.Client, completionsURL, token, model string, messages []ChatMessage, tools []Tool, temperature float64, maxTokens int) (*ChatResponse, error) {
 	req := ChatRequest{
 		Model:       model,
 		Messages:    messages,
 		Tools:       tools,
-		Temperature: 0.7,
+		Temperature: temperature,
+		MaxTokens:   maxTokens,
 		Stream:      false,
 	}
 

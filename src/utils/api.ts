@@ -107,6 +107,8 @@ export interface ScheduledTask {
   model: string;
   base_url?: string;
   container_image?: string;
+  temperature: number;
+  max_tokens: number;
   created_at: string;
 }
 
@@ -169,3 +171,33 @@ export const listModels = (endpointId?: number) =>
 // Health / config
 export const getHealth = () =>
   request<{ status: string; namespace: string }>('/health');
+
+// Database export/import
+export async function exportDatabase(): Promise<void> {
+  const resp = await fetch(`${PROXY_BASE}/database/export`, {
+    headers: { 'X-CSRFToken': getCSRFToken() },
+  });
+  if (!resp.ok) throw new Error('Export failed');
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'skills.db';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function importDatabase(file: File): Promise<{ message: string }> {
+  const form = new FormData();
+  form.append('database', file);
+  const resp = await fetch(`${PROXY_BASE}/database/import`, {
+    method: 'POST',
+    headers: { 'X-CSRFToken': getCSRFToken() },
+    body: form,
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ error: resp.statusText }));
+    throw new Error(err.error || resp.statusText);
+  }
+  return resp.json();
+}

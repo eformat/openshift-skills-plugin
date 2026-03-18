@@ -70,6 +70,8 @@ export default function SchedulePage() {
   const [serviceAccount, setServiceAccount] = React.useState('default');
   const [namespace, setNamespace] = React.useState('default');
   const [containerImage, setContainerImage] = React.useState('');
+  const [temperature, setTemperature] = React.useState(0.2);
+  const [maxTokens, setMaxTokens] = React.useState(2048);
   const [selectedEndpoint, setSelectedEndpoint] = React.useState('');
   const [selectedModelId, setSelectedModelId] = React.useState('');
 
@@ -131,6 +133,8 @@ export default function SchedulePage() {
         model: selectedModelId,
         base_url: selectedModel?.url,
         container_image: containerImage,
+        temperature,
+        max_tokens: maxTokens,
       });
       setShowCreate(false);
       resetForm();
@@ -147,6 +151,8 @@ export default function SchedulePage() {
     setServiceAccount(task.service_account);
     setNamespace(task.namespace);
     setContainerImage(task.container_image || '');
+    setTemperature(task.temperature || 0.2);
+    setMaxTokens(task.max_tokens || 2048);
     setSelectedModelId(task.model);
     // Find the endpoint that matches this task's base_url and load its models
     const matchingEndpoint = endpoints.find(e => task.base_url && task.base_url.startsWith(e.url));
@@ -173,6 +179,8 @@ export default function SchedulePage() {
         model: selectedModelId,
         base_url: selectedModel?.url || editingTask.base_url,
         container_image: containerImage,
+        temperature,
+        max_tokens: maxTokens,
       });
       setShowCreate(false);
       setEditingTask(null);
@@ -195,6 +203,7 @@ export default function SchedulePage() {
   const resetForm = () => {
     setName(''); setDescription(''); setSchedule(''); setSelectedSkillId('');
     setServiceAccount('default'); setNamespace(pluginNamespace); setContainerImage('');
+    setTemperature(0.2); setMaxTokens(2048);
     setSelectedEndpoint(''); setSelectedModelId('');
     setEditingTask(null);
   };
@@ -319,8 +328,8 @@ export default function SchedulePage() {
           <FormGroup label="Name" isRequired fieldId="task-name">
             <TextInput id="task-name" value={name} onChange={(_e, v) => setName(v)} />
           </FormGroup>
-          <FormGroup label="Description" fieldId="task-desc">
-            <TextArea id="task-desc" value={description} onChange={(_e, v) => setDescription(v)} rows={3} />
+          <FormGroup label="Prompt" fieldId="task-desc">
+            <TextArea id="task-desc" value={description} onChange={(_e, v) => setDescription(v)} rows={3} placeholder="Instructions to send with the skill to the agent..." />
           </FormGroup>
           <FormGroup label="Cron Schedule" isRequired fieldId="task-schedule">
             <TextInput id="task-schedule" value={schedule} onChange={(_e, v) => setSchedule(v)} placeholder="0 9 * * *" />
@@ -371,6 +380,22 @@ export default function SchedulePage() {
                 <FormSelectOption key={m.id} value={m.id} label={m.display_name + (m.ready ? '' : ' (not ready)')} />
               ))}
             </FormSelect>
+          </FormGroup>
+          <FormGroup label="Temperature" fieldId="task-temperature">
+            <TextInput id="task-temperature" type="number" value={temperature.toString()} onChange={(_e, v) => setTemperature(parseFloat(v) || 0)} />
+            <FormHelperText>
+              <HelperText>
+                <HelperTextItem>Controls randomness (0.0 = deterministic, 1.0+ = creative). Default: 0.7</HelperTextItem>
+              </HelperText>
+            </FormHelperText>
+          </FormGroup>
+          <FormGroup label="Max Token Length" fieldId="task-max-tokens">
+            <TextInput id="task-max-tokens" type="number" value={maxTokens.toString()} onChange={(_e, v) => setMaxTokens(parseInt(v) || 0)} />
+            <FormHelperText>
+              <HelperText>
+                <HelperTextItem>Maximum tokens in the response (0 = model default)</HelperTextItem>
+              </HelperText>
+            </FormHelperText>
           </FormGroup>
         </ModalBody>
         <ModalFooter>
