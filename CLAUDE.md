@@ -5,10 +5,11 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 ## Architecture
 
 ### Frontend (TypeScript, PatternFly 6)
-- **`src/components/ChatPage.tsx`** - Interactive chat with agent loop (shell tool access in plugin pod)
+- **`src/components/ChatPage.tsx`** - Interactive chat with agent loop (shell tool access in plugin pod). Renders markdown responses via `react-markdown` + `remark-gfm` (code blocks, tables, lists, etc.)
 - **`src/components/SkillsPage.tsx`** - Upload/manage SKILLS.md knowledge files
-- **`src/components/SchedulePage.tsx`** - Schedule skills as cron jobs with container image, SA, namespace
-- **`src/components/SettingsPage.tsx`** - Configure MaaS endpoints
+- **`src/components/SchedulePage.tsx`** - Schedule skills as cron jobs with container image, SA, namespace, prompt, temperature, max token length
+- **`src/components/SettingsPage.tsx`** - Configure MaaS endpoints, export/import SQLite database
+- **`src/components/styles.css`** - Chat message styling including markdown rendering (code, tables, blockquotes, lists)
 - **`src/utils/api.ts`** - API client with CSRF token handling (`X-CSRFToken` header from `csrf-token` cookie)
 - **`console-extensions.json`** - Plugin routes under `/skills-plugin/{chat,skills,schedule,settings}` in admin perspective "Skills" nav section
 
@@ -17,15 +18,19 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 - **`pkg/api/`** - REST handlers:
   - `chat.go` - `SendMessage` (POST) uses agent loop with local shell; `WebSocketChat` uses simple `maas.Complete()`
   - `schedule.go` - Cron scheduler (robfig/cron), two execution paths:
-    - **Container image set** → `executeContainerTask()`: creates executor pod → agent loop with `kube.ExecCommand` → deletes pod when done
-    - **No container image** → `executeLLMTask()`: agent loop with local shell in plugin pod
+    - **Container image set** → `executeContainerTask()`: creates executor pod → agent loop with `kube.ExecCommand` → stores results in chat session → deletes pod when done
+    - **No container image** → `executeLLMTask()`: agent loop with local shell in plugin pod → stores results in chat session
+    - `ReloadScheduler()` - clears all cron entries and reloads from DB (used after database import)
+    - Disabled tasks are skipped silently (no failed history entries)
+  - `database.go` - `ExportDatabase` (GET, serves raw .db file) and `ImportDatabase` (POST multipart, replaces DB and reinitializes)
   - `skills.go` - CRUD for skills (upload SKILLS.md files)
   - `sessions.go` - CRUD for chat sessions
-  - `maas_endpoints.go` - CRUD for MaaS endpoints, model listing, health checks
+  - `maas_endpoints.go` - CRUD for MaaS endpoints, model listing, health checks. API keys are never returned to the frontend (masked as `"****"`)
   - `helpers.go` - `jsonResponse()`, `httpError()`
 - **`pkg/agent/agent.go`** - LLM-driven agent loop (OpenAI-compatible tool calling API):
-  - `RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor) (string, error)`
+  - `RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (string, error)`
   - `ShellExecutor` type: `func(command string) string` - controls where commands run (nil = local `sh -c`)
+  - `AgentOptions` struct: `Temperature float64`, `MaxTokens int` - per-task LLM parameters
   - Single `shell` tool definition, iterates up to `maxIterations` (default 15) calling LLM and executing tool calls
   - Strips `<think>` tags from responses (for reasoning models)
 - **`pkg/agent/context.go`** - `newTimeoutContext()` helper
@@ -44,13 +49,15 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
   - Model name is extracted from URL last path segment (e.g. `llama-32-3b` from `.../llama-32-3b`)
 - **`pkg/database/`** - SQLite (mattn/go-sqlite3) with WAL mode:
   - `database.go` - Init, migrate, schema for: `skills`, `sessions`, `messages`, `scheduled_tasks`, `task_execution_history`, `maas_endpoints`, `config`
-  - `models.go` - Go structs: `Skill`, `Session`, `Message`, `ScheduledTask`, `TaskExecutionHistory`, `MaaSEndpoint`, `Config`
+  - `GetDBPath()`, `Checkpoint()` (flush WAL), `Reinit(newDBPath)` (close, replace file, reopen with migrations)
+  - `models.go` - Go structs: `Skill`, `Session`, `Message`, `ScheduledTask` (includes `Temperature`, `MaxTokens`; `APIKey` uses `json:"-"`), `TaskExecutionHistory`, `MaaSEndpoint`, `Config`
 
 ## Deployment
 
 ### Container Build
 - **`Containerfile`** - Multi-stage: Node 20 (frontend) → Go 1.25 (backend) → UBI9 minimal
   - Installs `sqlite-libs`, `tar`, `gzip`, `oc`, `kubectl` in final image
+  - Frontend build requires `NODE_OPTIONS="--max-old-space-size=4096"` for webpack
   - Runs as UID 1001, port 9443
 
 ### Helm Chart (`chart/`)
@@ -68,11 +75,19 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 ## Key Design Decisions
 
 - **Agent loop in executor pods**: Scheduled skills with a container image create a temporary pod (`sleep 3600`), run the agent loop with commands exec'd into that pod via SPDY, then delete the pod. This keeps the plugin pod clean and allows per-task RBAC via ServiceAccount selection.
+- **Scheduled task results in chat**: Both execution paths (container and LLM-only) create/reuse a chat session and store messages, so results appear in the Chat UI.
 - **Console proxy for API calls**: All frontend API calls go through the OpenShift console proxy (`/api/proxy/plugin/openshift-skills-plugin/backend/...`), requiring CSRF tokens.
 - **MaaS two-step auth**: Bearer token → `POST /v1/tokens` → session token. Session token used for all subsequent API calls.
 - **Model name from URL**: Inference endpoints expect the URL path segment as model name (e.g. `llama-32-3b`), not the registry ID (e.g. `RedHatAI/llama-3.2-3b-instruct`).
+- **Token security**: API keys are never returned to the frontend. `ScheduledTask.APIKey` uses `json:"-"`, `ListEndpoints` returns `"****"`, Settings UI shows "Configured"/"Not set".
+- **Database portability**: Export/import of the SQLite database file via Settings page for migrating config between clusters. Import triggers `Reinit()` + `ReloadScheduler()`.
+- **No `<Page>` wrapper**: Console layout provides its own wrapper; adding `<Page>` causes a grey gap.
+- **Chat nav route**: Uses `/skills-plugin/chat` (not `/skills-plugin`) to avoid prefix-match highlighting all nav items.
 
 ## Go Module
 - Module: `github.com/eformat/openshift-skills-plugin`
 - Requires: Go >= 1.25
 - Key deps: `gorilla/mux`, `gorilla/websocket`, `mattn/go-sqlite3`, `robfig/cron/v3`, `k8s.io/client-go`
+
+## Frontend Dependencies
+- Key deps: `react-markdown`, `remark-gfm`, `@patternfly/react-core@6`, `@openshift-console/dynamic-plugin-sdk`
