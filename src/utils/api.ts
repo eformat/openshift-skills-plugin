@@ -64,6 +64,8 @@ export interface Session {
   provider: string;
   model: string;
   base_url?: string;
+  temperature: number;
+  max_tokens: number;
   created_at: string;
 }
 
@@ -76,7 +78,7 @@ export interface Message {
 }
 
 export const listSessions = () => request<Session[]>('/sessions');
-export const createSession = (data: { provider: string; model: string; base_url?: string; skill_ids?: number[] }) =>
+export const createSession = (data: { provider: string; model: string; base_url?: string; skill_ids?: number[]; temperature?: number; max_tokens?: number }) =>
   request<{ id: string; name: string }>('/sessions', { method: 'POST', body: JSON.stringify(data) });
 export const getSession = (id: string) =>
   request<{ session: Session; messages: Message[]; skill_ids: number[] }>('/sessions/' + id);

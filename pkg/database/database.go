@@ -184,8 +184,10 @@ func migrate(db *sql.DB) error {
 		)`,
 		// Migrations for existing tables
 		`ALTER TABLE scheduled_tasks ADD COLUMN container_image TEXT DEFAULT ''`,
-		`ALTER TABLE scheduled_tasks ADD COLUMN temperature REAL DEFAULT 0.7`,
+		`ALTER TABLE scheduled_tasks ADD COLUMN temperature REAL DEFAULT 0.2`,
 		`ALTER TABLE scheduled_tasks ADD COLUMN max_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE sessions ADD COLUMN temperature REAL DEFAULT 0.2`,
+		`ALTER TABLE sessions ADD COLUMN max_tokens INTEGER DEFAULT 0`,
 	}
 	// ALTER TABLE will fail if column already exists, that's fine
 	for _, stmt := range statements {

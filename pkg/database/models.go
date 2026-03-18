@@ -19,6 +19,8 @@ type Session struct {
 	Model        string    `json:"model"`
 	BaseURL      string    `json:"base_url,omitempty"`
 	SystemPrompt string    `json:"system_prompt,omitempty"`
+	Temperature  float64   `json:"temperature"`
+	MaxTokens    int       `json:"max_tokens"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

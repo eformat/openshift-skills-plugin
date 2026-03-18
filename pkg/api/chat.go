@@ -40,8 +40,8 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Get session
 	var sess database.Session
-	err := db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,'') FROM sessions WHERE id = ?", sessionID).
-		Scan(&sess.ID, &sess.Name, &sess.Provider, &sess.Model, &sess.BaseURL, &sess.SystemPrompt)
+	err := db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), temperature, max_tokens FROM sessions WHERE id = ?", sessionID).
+		Scan(&sess.ID, &sess.Name, &sess.Provider, &sess.Model, &sess.BaseURL, &sess.SystemPrompt, &sess.Temperature, &sess.MaxTokens)
 	if err == sql.ErrNoRows {
 		httpError(w, http.StatusNotFound, "session not found")
 		return
@@ -150,7 +150,11 @@ Only report what the commands actually return.`
 		}
 	}
 
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, &agent.AgentOptions{History: history})
+	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, &agent.AgentOptions{
+		Temperature: sess.Temperature,
+		MaxTokens:   sess.MaxTokens,
+		History:     history,
+	})
 	if err != nil {
 		log.Printf("Agent error: %v", err)
 		httpError(w, http.StatusBadGateway, "agent execution failed: "+err.Error())
@@ -189,8 +193,8 @@ func WebSocketChat(w http.ResponseWriter, r *http.Request) {
 
 		// Get session
 		var sess database.Session
-		err = db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,'') FROM sessions WHERE id = ?", sessionID).
-			Scan(&sess.ID, &sess.Name, &sess.Provider, &sess.Model, &sess.BaseURL, &sess.SystemPrompt)
+		err = db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), temperature, max_tokens FROM sessions WHERE id = ?", sessionID).
+			Scan(&sess.ID, &sess.Name, &sess.Provider, &sess.Model, &sess.BaseURL, &sess.SystemPrompt, &sess.Temperature, &sess.MaxTokens)
 		if err != nil {
 			conn.WriteJSON(map[string]string{"error": "session not found"})
 			continue

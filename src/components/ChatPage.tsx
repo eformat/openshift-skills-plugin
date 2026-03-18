@@ -63,6 +63,8 @@ export default function ChatPage() {
   const [selectedSkillIds, setSelectedSkillIds] = React.useState<number[]>([]);
   const [sessionSkillIds, setSessionSkillIds] = React.useState<number[]>([]);
   const [skillsExpanded, setSkillsExpanded] = React.useState(false);
+  const [temperature, setTemperature] = React.useState(0.2);
+  const [maxTokens, setMaxTokens] = React.useState(2048);
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -132,6 +134,8 @@ export default function ChatPage() {
         model: selectedModelId,
         base_url: selectedModel?.url,
         skill_ids: selectedSkillIds,
+        temperature,
+        max_tokens: maxTokens,
       });
       setShowNewSession(false);
       await loadSessions();
@@ -205,6 +209,8 @@ export default function ChatPage() {
                 loadEndpoints();
                 loadSkills();
                 setSelectedSkillIds(enabledSkills.map(s => s.id));
+                setTemperature(0.2);
+                setMaxTokens(2048);
               }}>
                 New Chat
               </Button>
@@ -353,6 +359,12 @@ export default function ChatPage() {
                 />
               ))
             )}
+          </FormGroup>
+          <FormGroup label="Temperature" fieldId="temperature">
+            <TextInput id="temperature" type="number" value={temperature} onChange={(_e, val) => setTemperature(parseFloat(val) || 0)} min={0} max={2} step={0.1} />
+          </FormGroup>
+          <FormGroup label="Max Tokens" fieldId="max-tokens">
+            <TextInput id="max-tokens" type="number" value={maxTokens} onChange={(_e, val) => setMaxTokens(parseInt(val) || 0)} min={0} step={256} />
           </FormGroup>
         </ModalBody>
         <ModalFooter>

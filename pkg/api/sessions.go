@@ -16,6 +16,8 @@ type createSessionRequest struct {
 	BaseURL      string  `json:"base_url,omitempty"`
 	SystemPrompt string  `json:"system_prompt,omitempty"`
 	SkillIDs     []int64 `json:"skill_ids,omitempty"`
+	Temperature  float64 `json:"temperature"`
+	MaxTokens    int     `json:"max_tokens"`
 }
 
 type updateSessionSkillsRequest struct {
@@ -34,9 +36,12 @@ func CreateSession(w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.New().String()
 	name := "Chat " + id[:8]
+	if req.Temperature <= 0 {
+		req.Temperature = 0.2
+	}
 	db := database.GetDB()
-	_, err := db.Exec("INSERT INTO sessions (id, name, provider, model, base_url, system_prompt) VALUES (?, ?, ?, ?, ?, ?)",
-		id, name, req.Provider, req.Model, req.BaseURL, req.SystemPrompt)
+	_, err := db.Exec("INSERT INTO sessions (id, name, provider, model, base_url, system_prompt, temperature, max_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		id, name, req.Provider, req.Model, req.BaseURL, req.SystemPrompt, req.Temperature, req.MaxTokens)
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -52,7 +57,7 @@ func CreateSession(w http.ResponseWriter, r *http.Request) {
 
 func ListSessions(w http.ResponseWriter, r *http.Request) {
 	db := database.GetDB()
-	rows, err := db.Query("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), created_at, updated_at FROM sessions ORDER BY updated_at DESC")
+	rows, err := db.Query("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), temperature, max_tokens, created_at, updated_at FROM sessions ORDER BY updated_at DESC")
 	if err != nil {
 		httpError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -62,7 +67,7 @@ func ListSessions(w http.ResponseWriter, r *http.Request) {
 	sessions := []database.Session{}
 	for rows.Next() {
 		var s database.Session
-		if err := rows.Scan(&s.ID, &s.Name, &s.Provider, &s.Model, &s.BaseURL, &s.SystemPrompt, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Name, &s.Provider, &s.Model, &s.BaseURL, &s.SystemPrompt, &s.Temperature, &s.MaxTokens, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			httpError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -76,8 +81,8 @@ func GetSession(w http.ResponseWriter, r *http.Request) {
 	db := database.GetDB()
 
 	var s database.Session
-	err := db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), created_at, updated_at FROM sessions WHERE id = ?", id).
-		Scan(&s.ID, &s.Name, &s.Provider, &s.Model, &s.BaseURL, &s.SystemPrompt, &s.CreatedAt, &s.UpdatedAt)
+	err := db.QueryRow("SELECT id, name, provider, model, COALESCE(base_url,''), COALESCE(system_prompt,''), temperature, max_tokens, created_at, updated_at FROM sessions WHERE id = ?", id).
+		Scan(&s.ID, &s.Name, &s.Provider, &s.Model, &s.BaseURL, &s.SystemPrompt, &s.Temperature, &s.MaxTokens, &s.CreatedAt, &s.UpdatedAt)
 	if err == sql.ErrNoRows {
 		httpError(w, http.StatusNotFound, "session not found")
 		return
