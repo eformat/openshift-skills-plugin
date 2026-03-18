@@ -51,6 +51,7 @@ If the node is Unhealthy - a cri-purge can be run to free space - replace the cr
 
 ## Additional Notes
 
+```
 cri-purge.sh | Version: 0.1.2 | 06/10/2024 | Richard J. Durso
 
   List and Purge downloaded cached images from containerd.
@@ -68,3 +69,4 @@ cri-purge.sh | Version: 0.1.2 | 06/10/2024 | Richard J. Durso
   -p,   --purge           : List images and PURGE/PRUNE older versioned images.
   -pd,  --purge-dangling  : Same as --purge, but include dangling images.
   -s,   --show-dangling   : List dangling images with '<none>' tag.
+```
