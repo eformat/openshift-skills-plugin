@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/eformat/openshift-skills-plugin/pkg/mlflow"
 )
 
 // Tool definitions for the LLM
@@ -56,9 +59,18 @@ type ChatRequest struct {
 
 // AgentOptions holds optional parameters for the agent loop.
 type AgentOptions struct {
-	Temperature float64
-	MaxTokens   int
-	History     []ChatMessage // Prior conversation messages (inserted between system prompt and user message)
+	Temperature    float64
+	MaxTokens      int
+	History        []ChatMessage // Prior conversation messages (inserted between system prompt and user message)
+	Source         string        // Trace source label: "chat", "schedule-container", "schedule-llm"
+	ExperimentName string        // MLflow experiment name (e.g. chat session name)
+}
+
+// AgentResult contains the response and metrics from an agent loop execution.
+type AgentResult struct {
+	Response   string
+	Iterations int
+	ToolCalls  int
 }
 
 type ChatChoice struct {
@@ -104,13 +116,15 @@ type ShellExecutor func(command string) string
 // 4. Repeat until done or max iterations
 //
 // If shellExec is nil, commands are executed locally via sh -c.
-func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (string, error) {
+func RunAgentLoop(ctx context.Context, completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (*AgentResult, error) {
 	if maxIterations <= 0 {
 		maxIterations = 15
 	}
 
 	temperature := 0.7
 	maxTokens := 0
+	source := "agent"
+	experimentName := "openshift-skills"
 	if opts != nil {
 		if opts.Temperature > 0 {
 			temperature = opts.Temperature
@@ -118,7 +132,16 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 		if opts.MaxTokens > 0 {
 			maxTokens = opts.MaxTokens
 		}
+		if opts.Source != "" {
+			source = opts.Source
+		}
+		if opts.ExperimentName != "" {
+			experimentName = opts.ExperimentName
+		}
 	}
+
+	// Start root AGENT trace span (routed to the per-experiment MLflow tracer)
+	ctx, agentSpan := mlflow.StartAgentSpan(ctx, experimentName, model, source, userMessage, temperature, maxTokens)
 
 	messages := []ChatMessage{
 		{Role: "system", Content: systemPrompt},
@@ -130,22 +153,35 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 	messages = append(messages, ChatMessage{Role: "user", Content: userMessage})
 
 	client := &http.Client{Timeout: 120 * time.Second}
+	totalToolCalls := 0
 
 	for iteration := 0; iteration < maxIterations; iteration++ {
 		log.Printf("Agent iteration %d/%d, messages=%d", iteration+1, maxIterations, len(messages))
 
+		// Start CHAT_MODEL span for this LLM call
+		_, llmSpan := mlflow.StartLLMSpan(ctx, model, iteration)
+
 		// Call LLM with tools
 		resp, err := callLLM(client, completionsURL, token, model, messages, agentTools, temperature, maxTokens)
 		if err != nil {
-			return "", fmt.Errorf("iteration %d: LLM call failed: %w", iteration+1, err)
+			llmErr := fmt.Errorf("iteration %d: LLM call failed: %w", iteration+1, err)
+			mlflow.EndSpanError(llmSpan, llmErr)
+			mlflow.EndSpanError(agentSpan, llmErr)
+			return nil, llmErr
 		}
 
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("iteration %d: no choices in response", iteration+1)
+			llmErr := fmt.Errorf("iteration %d: no choices in response", iteration+1)
+			mlflow.EndSpanError(llmSpan, llmErr)
+			mlflow.EndSpanError(agentSpan, llmErr)
+			return nil, llmErr
 		}
 
 		choice := resp.Choices[0]
 		assistantMsg := choice.Message
+
+		// End LLM span with the response
+		mlflow.EndSpanOK(llmSpan, assistantMsg.Content)
 
 		// Add assistant message to history
 		messages = append(messages, assistantMsg)
@@ -157,13 +193,22 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 				content = "(Agent completed with no final response)"
 			}
 			log.Printf("Agent completed after %d iterations", iteration+1)
-			return content, nil
+			result := &AgentResult{Response: content, Iterations: iteration + 1, ToolCalls: totalToolCalls}
+			mlflow.EndSpanOK(agentSpan, content)
+			return result, nil
 		}
 
 		// Execute each tool call
 		for _, tc := range assistantMsg.ToolCalls {
+			totalToolCalls++
+
+			// Start TOOL span
+			_, toolSpan := mlflow.StartToolSpan(ctx, tc.Function.Name, tc.Function.Arguments)
+
 			result := executeToolCall(tc, shellExec)
 			log.Printf("Tool %s(%s): %d bytes output", tc.Function.Name, truncate(tc.Function.Arguments, 80), len(result))
+
+			mlflow.EndSpanOK(toolSpan, result)
 
 			// Add tool result to messages
 			messages = append(messages, ChatMessage{
@@ -184,9 +229,13 @@ func RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string
 		}
 	}
 	if lastContent != "" {
-		return stripThinkTags(lastContent) + "\n\n(Maximum iterations reached)", nil
+		content := stripThinkTags(lastContent) + "\n\n(Maximum iterations reached)"
+		mlflow.EndSpanOK(agentSpan, content)
+		return &AgentResult{Response: content, Iterations: maxIterations, ToolCalls: totalToolCalls}, nil
 	}
-	return "", fmt.Errorf("maximum iterations (%d) reached without completing the task", maxIterations)
+	maxIterErr := fmt.Errorf("maximum iterations (%d) reached without completing the task", maxIterations)
+	mlflow.EndSpanError(agentSpan, maxIterErr)
+	return nil, maxIterErr
 }
 
 func callLLM(client *http.Client, completionsURL, token, model string, messages []ChatMessage, tools []Tool, temperature float64, maxTokens int) (*ChatResponse, error) {

@@ -73,7 +73,13 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 - **`deployment.yaml`** - Sets `POD_NAMESPACE` via downward API, TLS from serving cert secret, PVC for SQLite data
 - **`rbac.yaml`** - ClusterRole for batch jobs CRUD, serviceaccounts/namespaces list; namespace-scoped Role for pods create/delete, pods/log get, pods/exec create
 - **`enable-plugin.yaml`** - Post-install/upgrade hook Job that patches Console CR to enable plugin (avoids ownership conflicts with other operators)
-- **`values.yaml`** - Image: `quay.io/eformat/openshift-skills-plugin:latest`, PVC 2Gi, TLS enabled
+- **`values.yaml`** - Image: `quay.io/eformat/openshift-skills-plugin:latest`, PVC 2Gi, TLS enabled, mlflow disabled by default
+- **MLflow templates** (all gated by `.Values.mlflow.enabled`):
+  - `mlflow-deployment.yaml` - MLflow server with optional oauth-proxy sidecar (HTTPS :8443, serving cert TLS, upstream to localhost mlflow port)
+  - `mlflow-service.yaml` - ClusterIP service exposing mlflow http port + oauth port (8443) when oauth enabled; serving cert annotation for auto-provisioned TLS secret
+  - `mlflow-pvc.yaml` - PersistentVolumeClaim for mlflow data
+  - `mlflow-serviceaccount.yaml` - ServiceAccount with `oauth-redirectreference` annotation pointing to mlflow route
+  - `mlflow-route.yaml` - Route with `reencrypt` TLS termination targeting oauth proxy port (only created when oauth enabled)
 
 ### Deploy
 ```bash
@@ -101,6 +107,7 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 - **Database portability**: Export/import of the SQLite database file via Settings page for migrating config between clusters. Import triggers `Reinit()` + `ReloadScheduler()`.
 - **No `<Page>` wrapper**: Console layout provides its own wrapper; adding `<Page>` causes a grey gap.
 - **Chat nav route**: Uses `/skills-plugin/chat` (not `/skills-plugin`) to avoid prefix-match highlighting all nav items.
+- **MLflow with OAuth proxy**: Optional MLflow deployment (`mlflow.enabled: false` by default) with OpenShift oauth-proxy sidecar for SSO authentication. Uses the standard OpenShift pattern: serving cert annotation on service auto-provisions a TLS secret, oauth-proxy serves HTTPS on :8443 with those certs, route uses `reencrypt` termination, and the ServiceAccount has the `oauth-redirectreference` annotation. All resources named `{{ .Values.plugin.name }}-mlflow`.
 
 ## Go Module
 - Module: `github.com/eformat/openshift-skills-plugin`

@@ -1,0 +1,87 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.plugin.name }}-mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mlflow
+spec:
+  replicas: {{ .Values.mlflow.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mlflow
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: mlflow
+    spec:
+      serviceAccountName: {{ .Values.plugin.name }}-mlflow
+      containers:
+        - name: mlflow
+          image: "{{ .Values.mlflow.image.repository }}:{{ .Values.mlflow.image.tag }}"
+          imagePullPolicy: {{ .Values.mlflow.image.pullPolicy | default "Always" }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.mlflow.port }}
+              protocol: TCP
+          {{- if .Values.mlflow.args }}
+          args:
+            {{- toYaml .Values.mlflow.args | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: data
+              mountPath: /mlflow
+          resources:
+            {{- toYaml .Values.mlflow.resources | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+        {{- if .Values.mlflow.oauth.enabled }}
+        - name: oauth-proxy
+          image: "{{ .Values.mlflow.oauth.image.repository }}:{{ .Values.mlflow.oauth.image.tag }}"
+          imagePullPolicy: {{ .Values.mlflow.oauth.image.pullPolicy | default "Always" }}
+          args:
+            - --https-address=:8443
+            - --http-address=
+            - --upstream=http://localhost:{{ .Values.mlflow.port }}
+            - --provider=openshift
+            - --openshift-service-account={{ .Values.plugin.name }}-mlflow
+            - --tls-cert=/etc/tls/private/tls.crt
+            - --tls-key=/etc/tls/private/tls.key
+            - --cookie-secret={{ .Values.mlflow.oauth.cookieSecret | default "SECRET" }}
+            - --pass-user-headers=true
+            - --pass-access-token=false
+          ports:
+            - name: oauth
+              containerPort: 8443
+              protocol: TCP
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/tls/private
+        {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.plugin.name }}-mlflow
+        {{- if .Values.mlflow.oauth.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.plugin.name }}-mlflow-tls
+        {{- end }}
+{{- end }}

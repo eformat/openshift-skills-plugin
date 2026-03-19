@@ -1,0 +1,32 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.plugin.name }}-mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mlflow
+  {{- if .Values.mlflow.oauth.enabled }}
+  annotations:
+    service.alpha.openshift.io/serving-cert-secret-name: {{ .Values.plugin.name }}-mlflow-tls
+  {{- end }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: {{ .Values.mlflow.port }}
+      targetPort: http
+      protocol: TCP
+    {{- if .Values.mlflow.oauth.enabled }}
+    - name: oauth
+      port: 8443
+      targetPort: oauth
+      protocol: TCP
+    {{- end }}
+  selector:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mlflow
+{{- end }}

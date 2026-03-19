@@ -1,13 +1,13 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
 	"net/http"
-	"time"
-
 	"strings"
+	"time"
 
 	"github.com/eformat/openshift-skills-plugin/pkg/agent"
 	"github.com/eformat/openshift-skills-plugin/pkg/database"
@@ -155,10 +155,12 @@ sh /tmp/script.sh`
 		}
 	}
 
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, &agent.AgentOptions{
-		Temperature: sess.Temperature,
-		MaxTokens:   sess.MaxTokens,
-		History:     history,
+	result, err := agent.RunAgentLoop(context.Background(), completionsURL, maasClient.GetToken(), modelName, agentSystemPrompt, req.Message, 15, nil, &agent.AgentOptions{
+		Temperature:    sess.Temperature,
+		MaxTokens:      sess.MaxTokens,
+		History:        history,
+		Source:         "chat",
+		ExperimentName: sess.Name,
 	})
 	if err != nil {
 		log.Printf("Agent error: %v", err)
@@ -167,10 +169,10 @@ sh /tmp/script.sh`
 	}
 
 	// Store assistant message
-	db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sessionID, response)
+	db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sessionID, result.Response)
 	db.Exec("UPDATE sessions SET updated_at = ? WHERE id = ?", time.Now(), sessionID)
 
-	jsonResponse(w, map[string]string{"response": response})
+	jsonResponse(w, map[string]string{"response": result.Response})
 }
 
 func WebSocketChat(w http.ResponseWriter, r *http.Request) {

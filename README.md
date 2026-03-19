@@ -12,6 +12,13 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 
   ![demo/skills-console-plugin.png](demo/skills-console-plugin.png)
 
+For MLFlow (disabled by default) support
+
+```bash
+COOKIE=$(openssl rand -base64 32)
+helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace --set mlflow.enabled=true --set mlflow.oauth.cookieSecret=$COOKIE
+```
+
 ## Simple Demo
 
 1. Deploy the helm chart

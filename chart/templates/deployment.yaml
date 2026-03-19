@@ -47,6 +47,10 @@ spec:
             - name: TLS_KEY_FILE
               value: /var/serving-cert/tls.key
             {{- end }}
+            {{- if .Values.mlflow.enabled }}
+            - name: MLFLOW_TRACKING_URI
+              value: "http://{{ .Values.plugin.name }}-mlflow.{{ .Release.Namespace }}.svc:{{ .Values.mlflow.port }}"
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           livenessProbe:

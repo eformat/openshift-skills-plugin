@@ -1,0 +1,28 @@
+{{- if .Values.mlflow.enabled }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ .Values.plugin.name }}-mlflow
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mlflow
+spec:
+  to:
+    kind: Service
+    name: {{ .Values.plugin.name }}-mlflow
+  port:
+    {{- if .Values.mlflow.oauth.enabled }}
+    targetPort: oauth
+    {{- else }}
+    targetPort: http
+    {{- end }}
+  tls:
+    {{- if .Values.mlflow.oauth.enabled }}
+    termination: reencrypt
+    {{- else }}
+    termination: edge
+    {{- end }}
+  wildcardPolicy: None
+{{- end }}

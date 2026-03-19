@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"log"
@@ -327,18 +328,21 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	// Run the agent loop with commands executing in the pod
 	log.Printf("Starting agent loop for container task %d (%s) in pod %s/%s", taskID, task.Name, ep.Namespace, ep.Name)
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, shellExec, &agent.AgentOptions{Temperature: task.Temperature, MaxTokens: task.MaxTokens})
+	result, err := agent.RunAgentLoop(context.Background(), completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, shellExec, &agent.AgentOptions{
+		Temperature: task.Temperature, MaxTokens: task.MaxTokens, Source: "schedule-container",
+		ExperimentName: "Scheduled: " + task.Name,
+	})
 	if err != nil {
 		updateHistory(db, historyID, startTime, "failed", err.Error(), "")
 		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, "Error: "+err.Error())
 		log.Printf("Container task %d (%s) failed: %v", taskID, task.Name, err)
 	} else {
-		output := response
+		output := result.Response
 		if len(output) > 10000 {
 			output = output[:10000]
 		}
 		updateHistory(db, historyID, startTime, "success", "", output)
-		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, response)
+		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, result.Response)
 		log.Printf("Container task %d (%s) completed successfully", taskID, task.Name)
 	}
 
@@ -428,17 +432,20 @@ When you have completed all the steps, provide a final summary of the results.`
 
 	// Run the agent loop
 	log.Printf("Starting agent loop for task %d (%s) with model %s", taskID, task.Name, modelName)
-	response, err := agent.RunAgentLoop(completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, nil, &agent.AgentOptions{Temperature: task.Temperature, MaxTokens: task.MaxTokens})
+	result, err := agent.RunAgentLoop(context.Background(), completionsURL, maasClient.GetToken(), modelName, systemPrompt, message, 15, nil, &agent.AgentOptions{
+		Temperature: task.Temperature, MaxTokens: task.MaxTokens, Source: "schedule-llm",
+		ExperimentName: "Scheduled: " + task.Name,
+	})
 	if err != nil {
 		updateHistory(db, historyID, startTime, "failed", err.Error(), "")
 		db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, "Error: "+err.Error())
 		return
 	}
 
-	db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, response)
+	db.Exec("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", sid, result.Response)
 	db.Exec("UPDATE scheduled_tasks SET last_run = ?, run_count = run_count + 1, updated_at = ? WHERE id = ?", startTime, time.Now(), taskID)
 
-	output := response
+	output := result.Response
 	if len(output) > 10000 {
 		output = output[:10000]
 	}
