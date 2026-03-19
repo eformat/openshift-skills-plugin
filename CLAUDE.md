@@ -14,7 +14,7 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 - **`console-extensions.json`** - Plugin routes under `/skills-plugin/{chat,skills,schedule,settings}` in admin perspective "Skills" nav section
 
 ### Backend (Go)
-- **`cmd/backend/main.go`** - HTTP server (gorilla/mux), serves plugin static files + API routes, TLS support for OpenShift serving certs, initializes kube client on startup (non-fatal if unavailable)
+- **`cmd/backend/main.go`** - HTTP server (gorilla/mux), serves plugin static files + API routes, TLS support for OpenShift serving certs, initializes kube client on startup (non-fatal if unavailable), initializes MLflow tracing (`mlflow.Init("")`) with deferred `Shutdown()`
 - **`pkg/api/`** - REST handlers:
   - `chat.go` - `SendMessage` (POST) uses agent loop with local shell and passes conversation history for multi-turn context; `WebSocketChat` uses simple `maas.Complete()`. Both paths load only session-specific skills (falls back to all enabled skills if none selected).
   - `schedule.go` - Task scheduler supporting both cron (robfig/cron) and run-once (`time.AfterFunc`) execution:
@@ -33,10 +33,12 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
   - `config.go` - `GET/PUT /api/config?key=` for key-value config (e.g. `system_prompt`). `GetSystemPrompt()` helper used by session creation and scheduled task execution.
   - `helpers.go` - `jsonResponse()`, `httpError()`
 - **`pkg/agent/agent.go`** - LLM-driven agent loop (OpenAI-compatible tool calling API):
-  - `RunAgentLoop(completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (string, error)`
+  - `RunAgentLoop(ctx, completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (*AgentResult, error)`
   - `ShellExecutor` type: `func(command string) string` - controls where commands run (nil = local `sh -c`)
-  - `AgentOptions` struct: `Temperature float64`, `MaxTokens int`, `History []ChatMessage` (prior conversation messages inserted between system prompt and user message for multi-turn context)
+  - `AgentResult` struct: `Response string`, `Iterations int`, `ToolCalls int`
+  - `AgentOptions` struct: `Temperature float64`, `MaxTokens int`, `History []ChatMessage`, `Source string` (trace label), `ExperimentName string` (MLflow experiment)
   - Single `shell` tool definition, iterates up to `maxIterations` (default 15) calling LLM and executing tool calls
+  - Instrumented with OTel spans: root AGENT span → CHAT_MODEL per LLM call → TOOL per shell execution
   - Strips `<think>` tags from responses (for reasoning models)
 - **`pkg/agent/context.go`** - `newTimeoutContext()` helper
 - **`pkg/kube/exec.go`** - Executor pod lifecycle for running agent commands in containers:
@@ -55,6 +57,15 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
   - `IsSingleModelURL(url)` - detects URLs with path segments before `/v1` (e.g. `.../llama-32-3b/v1`)
   - `ExtractModelName(url, fallback)` - extracts model name from URL, stripping `/v1` suffix first to avoid returning "v1" as model name. Used by all code paths (chat, schedule container, schedule LLM)
   - `ModelNameFromURL(url)` - simpler extraction for display purposes
+- **`pkg/mlflow/client.go`** - MLflow/OpenTelemetry tracing integration:
+  - `Init(mlflowURL)` - validates MLflow connectivity (falls back to `MLFLOW_TRACKING_URI` env var), stores base URL/host for lazy tracer creation
+  - `getTracerForExperiment(experimentName)` - lazily creates and caches a `TracerProvider` per experiment, each with its own OTLP HTTP exporter configured with `x-mlflow-experiment-id` header. Creates MLflow experiments via v2 API (`getOrCreateExperiment`)
+  - `StartAgentSpan(ctx, experimentName, model, source, userMessage, temperature, maxTokens)` - root AGENT span routed to the per-experiment tracer
+  - `StartLLMSpan(ctx, model, iteration)` - CHAT_MODEL child span (inherits tracer from parent context)
+  - `StartToolSpan(ctx, toolName, arguments)` - TOOL child span
+  - `EndSpanOK(span, output)` / `EndSpanError(span, err)` - span completion helpers
+  - `Shutdown(ctx)` - flushes all cached tracer providers
+  - MLflow span attributes: `mlflow.spanType` (AGENT/CHAT_MODEL/TOOL), `mlflow.spanInputs`, `mlflow.spanOutputs`
 - **`pkg/database/`** - SQLite (mattn/go-sqlite3) with WAL mode:
   - `database.go` - Init, migrate, schema for: `skills`, `sessions`, `messages`, `session_skills`, `scheduled_tasks`, `task_execution_history`, `maas_endpoints`, `config`
   - `GetDBPath()`, `Checkpoint()` (flush WAL), `Reinit(newDBPath)` (close, replace file, reopen with migrations)
@@ -70,16 +81,16 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
 
 ### Helm Chart (`chart/`)
 - **`consoleplugin.yaml`** - ConsolePlugin CR (v1 API) with proxy: `endpoint.type: Service`, `authorization: UserToken`
-- **`deployment.yaml`** - Sets `POD_NAMESPACE` via downward API, TLS from serving cert secret, PVC for SQLite data
+- **`deployment.yaml`** - Sets `POD_NAMESPACE` via downward API, TLS from serving cert secret, PVC for SQLite data, `MLFLOW_TRACKING_URI` env var (when mlflow enabled, points to internal mlflow service)
 - **`rbac.yaml`** - ClusterRole for batch jobs CRUD, serviceaccounts/namespaces list; namespace-scoped Role for pods create/delete, pods/log get, pods/exec create
 - **`enable-plugin.yaml`** - Post-install/upgrade hook Job that patches Console CR to enable plugin (avoids ownership conflicts with other operators)
 - **`values.yaml`** - Image: `quay.io/eformat/openshift-skills-plugin:latest`, PVC 2Gi, TLS enabled, mlflow disabled by default
 - **MLflow templates** (all gated by `.Values.mlflow.enabled`):
-  - `mlflow-deployment.yaml` - MLflow server with optional oauth-proxy sidecar (HTTPS :8443, serving cert TLS, upstream to localhost mlflow port)
+  - `mlflow-deployment.yaml` - MLflow server using args-from-values pattern (no hardcoded command), optional oauth-proxy sidecar (HTTPS :8443, serving cert TLS, upstream to localhost mlflow port). Requires `--disable-security-middleware` for OTLP endpoint.
   - `mlflow-service.yaml` - ClusterIP service exposing mlflow http port + oauth port (8443) when oauth enabled; serving cert annotation for auto-provisioned TLS secret
   - `mlflow-pvc.yaml` - PersistentVolumeClaim for mlflow data
   - `mlflow-serviceaccount.yaml` - ServiceAccount with `oauth-redirectreference` annotation pointing to mlflow route
-  - `mlflow-route.yaml` - Route with `reencrypt` TLS termination targeting oauth proxy port (only created when oauth enabled)
+  - `mlflow-route.yaml` - Route always created when mlflow enabled. Edge TLS without oauth, reencrypt TLS with oauth.
 
 ### Deploy
 ```bash
@@ -107,12 +118,13 @@ helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace
 - **Database portability**: Export/import of the SQLite database file via Settings page for migrating config between clusters. Import triggers `Reinit()` + `ReloadScheduler()`.
 - **No `<Page>` wrapper**: Console layout provides its own wrapper; adding `<Page>` causes a grey gap.
 - **Chat nav route**: Uses `/skills-plugin/chat` (not `/skills-plugin`) to avoid prefix-match highlighting all nav items.
-- **MLflow with OAuth proxy**: Optional MLflow deployment (`mlflow.enabled: false` by default) with OpenShift oauth-proxy sidecar for SSO authentication. Uses the standard OpenShift pattern: serving cert annotation on service auto-provisions a TLS secret, oauth-proxy serves HTTPS on :8443 with those certs, route uses `reencrypt` termination, and the ServiceAccount has the `oauth-redirectreference` annotation. All resources named `{{ .Values.plugin.name }}-mlflow`.
+- **MLflow OTel tracing**: All agent loop executions (chat and scheduled tasks) are traced via OpenTelemetry and exported to MLflow's OTLP endpoint (`/v1/traces`). Hierarchical spans: AGENT (root) → CHAT_MODEL (per LLM call) → TOOL (per shell execution). Each chat session maps to a separate MLflow experiment (by session name); scheduled tasks use `"Scheduled: " + task.Name`. Per-experiment `TracerProvider` instances are lazily created and cached, each with its own OTLP HTTP exporter configured with the `x-mlflow-experiment-id` header. The `ghcr.io/mlflow/mlflow` image requires an explicit `mlflow server` command (Python entrypoint, not a server by default) and `--disable-security-middleware` for the OTLP endpoint to accept traces without auth.
+- **MLflow with OAuth proxy**: Optional MLflow deployment (`mlflow.enabled: false` by default) with OpenShift oauth-proxy sidecar for SSO authentication. Uses the standard OpenShift pattern: serving cert annotation on service auto-provisions a TLS secret, oauth-proxy serves HTTPS on :8443 with those certs, route uses `reencrypt` termination, and the ServiceAccount has the `oauth-redirectreference` annotation. Route is always created when mlflow is enabled (edge TLS without oauth, reencrypt with oauth). All resources named `{{ .Values.plugin.name }}-mlflow`.
 
 ## Go Module
 - Module: `github.com/eformat/openshift-skills-plugin`
 - Requires: Go >= 1.25
-- Key deps: `gorilla/mux`, `gorilla/websocket`, `mattn/go-sqlite3`, `robfig/cron/v3`, `k8s.io/client-go`
+- Key deps: `gorilla/mux`, `gorilla/websocket`, `mattn/go-sqlite3`, `robfig/cron/v3`, `k8s.io/client-go`, `go.opentelemetry.io/otel` (SDK + OTLP HTTP exporter)
 
 ## Frontend Dependencies
 - Key deps: `react-markdown`, `remark-gfm`, `@patternfly/react-core@6`, `@openshift-console/dynamic-plugin-sdk`

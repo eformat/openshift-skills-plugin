@@ -190,6 +190,19 @@ func RunAgentLoop(ctx context.Context, completionsURL, token, model, systemPromp
 		if len(assistantMsg.ToolCalls) == 0 {
 			content := stripThinkTags(assistantMsg.Content)
 			if content == "" {
+				// Fall back to the last non-empty assistant content or tool output
+				for i := len(messages) - 2; i >= 0; i-- {
+					if messages[i].Role == "assistant" && stripThinkTags(messages[i].Content) != "" {
+						content = stripThinkTags(messages[i].Content)
+						break
+					}
+					if messages[i].Role == "tool" && messages[i].Content != "" {
+						content = "Last tool output:\n" + messages[i].Content
+						break
+					}
+				}
+			}
+			if content == "" {
 				content = "(Agent completed with no final response)"
 			}
 			log.Printf("Agent completed after %d iterations", iteration+1)

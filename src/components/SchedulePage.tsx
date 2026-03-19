@@ -281,6 +281,12 @@ export default function SchedulePage() {
                       <DescriptionListTerm>ServiceAccount</DescriptionListTerm>
                       <DescriptionListDescription>{t.service_account} / {t.namespace}</DescriptionListDescription>
                     </DescriptionListGroup>
+                    {t.description && (
+                      <DescriptionListGroup>
+                        <DescriptionListTerm>Prompt</DescriptionListTerm>
+                        <DescriptionListDescription>{t.description}</DescriptionListDescription>
+                      </DescriptionListGroup>
+                    )}
                     <DescriptionListGroup>
                       <DescriptionListTerm>Model</DescriptionListTerm>
                       <DescriptionListDescription>{t.model} ({t.provider})</DescriptionListDescription>

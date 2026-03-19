@@ -3,6 +3,8 @@ package kube
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"time"
@@ -52,7 +54,9 @@ func CreateExecutorPod(namespace, serviceAccount, containerImage, taskName strin
 	if len(podName) > 50 {
 		podName = podName[:50]
 	}
-	podName = fmt.Sprintf("%s-%d", podName, time.Now().Unix())
+	randBytes := make([]byte, 4)
+	_, _ = rand.Read(randBytes)
+	podName = fmt.Sprintf("%s-%d-%s", podName, time.Now().Unix(), hex.EncodeToString(randBytes))
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

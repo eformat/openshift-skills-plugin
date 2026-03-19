@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eformat/openshift-skills-plugin/pkg/agent"
@@ -21,6 +22,9 @@ import (
 var cronScheduler *cron.Cron
 var cronEntries = map[int64]cron.EntryID{}
 var runOnceTimers = map[int64]*time.Timer{}
+
+// runningTasks tracks which tasks are currently executing to prevent concurrent runs.
+var runningTasks = sync.Map{}
 
 func InitScheduler() {
 	cronScheduler = cron.New()
@@ -167,6 +171,13 @@ func loadSessionMessages(db *sql.DB, sessionID string) []maas.ChatMessage {
 }
 
 func executeScheduledTask(taskID int64) {
+	// Prevent concurrent execution of the same task
+	if _, loaded := runningTasks.LoadOrStore(taskID, true); loaded {
+		log.Printf("Skipping task %d: already running", taskID)
+		return
+	}
+	defer runningTasks.Delete(taskID)
+
 	db := database.GetDB()
 
 	// Check if the task exists and is enabled before creating any history
@@ -209,6 +220,26 @@ func executeScheduledTask(taskID int64) {
 	executeLLMTask(db, historyID, startTime, taskID, &task, skillID, sessionID, skillContent, skillName)
 }
 
+// getOrCreateSession returns a valid session ID for a scheduled task.
+// If the task already has a session_id and that session still exists, it reuses it.
+// Otherwise it creates a new session and updates the task.
+func getOrCreateSession(db *sql.DB, sessionID sql.NullString, taskID int64, task *database.ScheduledTask) string {
+	if sessionID.Valid && sessionID.String != "" {
+		var exists int
+		err := db.QueryRow("SELECT 1 FROM sessions WHERE id = ?", sessionID.String).Scan(&exists)
+		if err == nil {
+			return sessionID.String
+		}
+		// Session was deleted — clear the stale reference and create a new one
+		log.Printf("Session %s for task %d no longer exists, creating new session", sessionID.String, taskID)
+	}
+	sid := "sched-" + strconv.FormatInt(task.ID, 10) + "-" + strconv.FormatInt(time.Now().Unix(), 10)
+	db.Exec("INSERT INTO sessions (id, name, provider, model, base_url) VALUES (?, ?, ?, ?, ?)",
+		sid, "Scheduled: "+task.Name, task.Provider, task.Model, task.BaseURL)
+	db.Exec("UPDATE scheduled_tasks SET session_id = ? WHERE id = ?", sid, taskID)
+	return sid
+}
+
 func updateHistory(db *sql.DB, historyID int64, startTime time.Time, status, errorMsg, output string) {
 	endTime := time.Now()
 	durationMs := endTime.Sub(startTime).Milliseconds()
@@ -223,16 +254,7 @@ func executeContainerTask(db *sql.DB, historyID int64, startTime time.Time, task
 		taskID, task.Name, task.ContainerImage, task.Namespace, task.ServiceAccount)
 
 	// Create or reuse a chat session so results appear in the Chat UI
-	sid := ""
-	if sessionID.Valid {
-		sid = sessionID.String
-	}
-	if sid == "" {
-		sid = "sched-" + strconv.FormatInt(task.ID, 10) + "-" + strconv.FormatInt(time.Now().Unix(), 10)
-		db.Exec("INSERT INTO sessions (id, name, provider, model, base_url) VALUES (?, ?, ?, ?, ?)",
-			sid, "Scheduled: "+task.Name, task.Provider, task.Model, task.BaseURL)
-		db.Exec("UPDATE scheduled_tasks SET session_id = ? WHERE id = ?", sid, taskID)
-	}
+	sid := getOrCreateSession(db, sessionID, taskID, task)
 
 	// Create an executor pod that the agent can exec commands into
 	ep, err := kube.CreateExecutorPod(task.Namespace, task.ServiceAccount, task.ContainerImage, task.Name)
@@ -377,16 +399,7 @@ func executeLLMTask(db *sql.DB, historyID int64, startTime time.Time, taskID int
 		return
 	}
 
-	sid := ""
-	if sessionID.Valid {
-		sid = sessionID.String
-	}
-	if sid == "" {
-		sid = "sched-" + strconv.FormatInt(task.ID, 10) + "-" + strconv.FormatInt(time.Now().Unix(), 10)
-		db.Exec("INSERT INTO sessions (id, name, provider, model, base_url) VALUES (?, ?, ?, ?, ?)",
-			sid, "Scheduled: "+task.Name, task.Provider, task.Model, task.BaseURL)
-		db.Exec("UPDATE scheduled_tasks SET session_id = ? WHERE id = ?", sid, taskID)
-	}
+	sid := getOrCreateSession(db, sessionID, taskID, task)
 
 	// Build system prompt with skill content and agent instructions
 	systemPrompt := `You are an AI agent executing a scheduled skill on an OpenShift cluster.
