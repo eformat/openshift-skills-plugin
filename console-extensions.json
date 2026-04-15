@@ -2,9 +2,8 @@
   {
     "type": "console.navigation/section",
     "properties": {
-      "id": "rhai-skills",
-      "name": "Skills",
-      "section": "rhai"
+      "id": "skills",
+      "name": "Skills"
     }
   },
   {
@@ -46,7 +45,7 @@
       "name": "Chat",
       "href": "/skills-plugin/chat",
       "perspective": "admin",
-      "section": "rhai-skills"
+      "section": "skills"
     }
   },
   {
@@ -56,7 +55,7 @@
       "name": "Manager",
       "href": "/skills-plugin/skills",
       "perspective": "admin",
-      "section": "rhai-skills"
+      "section": "skills"
     }
   },
   {
@@ -66,7 +65,7 @@
       "name": "Schedule",
       "href": "/skills-plugin/schedule",
       "perspective": "admin",
-      "section": "rhai-skills"
+      "section": "skills"
     }
   },
   {
@@ -76,7 +75,7 @@
       "name": "Settings",
       "href": "/skills-plugin/settings",
       "perspective": "admin",
-      "section": "rhai-skills"
+      "section": "skills"
     }
   }
 ]
