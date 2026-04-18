@@ -39,6 +39,13 @@
     }
   },
   {
+    "type": "console.page/route",
+    "properties": {
+      "path": "/skills-plugin/help/:topic?",
+      "component": { "$codeRef": "HelpPage" }
+    }
+  },
+  {
     "type": "console.navigation/href",
     "properties": {
       "id": "skills-chat",
@@ -74,6 +81,16 @@
       "id": "skills-settings",
       "name": "Settings",
       "href": "/skills-plugin/settings",
+      "perspective": "admin",
+      "section": "skills"
+    }
+  },
+  {
+    "type": "console.navigation/href",
+    "properties": {
+      "id": "skills-help",
+      "name": "Help",
+      "href": "/skills-plugin/help/getting-started",
       "perspective": "admin",
       "section": "skills"
     }

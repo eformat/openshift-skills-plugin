@@ -52,6 +52,7 @@
     "@babel/preset-react": "^7.24.7",
     "babel-loader": "^8.2.0",
     "react-markdown": "^10.1.0",
+    "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1"
   },
   "consolePlugin": {
@@ -63,7 +64,8 @@
       "SkillsPage": "./components/SkillsPage",
       "ChatPage": "./components/ChatPage",
       "SchedulePage": "./components/SchedulePage",
-      "SettingsPage": "./components/SettingsPage"
+      "SettingsPage": "./components/SettingsPage",
+      "HelpPage": "./components/HelpPage"
     },
     "dependencies": {
       "@console/pluginAPI": "*"
