@@ -6,6 +6,7 @@ import {
   Split,
   SplitItem,
   TextInput,
+  TextArea,
   Button,
   Card,
   CardBody,
@@ -293,22 +294,22 @@ export default function ChatPage() {
                     <div ref={messagesEndRef} />
                   </CardBody>
                   <div className="chat-input-bar">
-                    <Split hasGutter>
-                      <SplitItem isFilled>
-                        <TextInput
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                      <div style={{ flex: 1 }}>
+                        <TextArea
                           value={input}
                           onChange={(_e, val) => setInput(val)}
                           onKeyPress={handleKeyPress}
-                          placeholder="Type a message..."
+                          placeholder="Type a message... (Shift+Enter for new line)"
                           aria-label="Chat message"
+                          rows={3}
+                          autoResize
                         />
-                      </SplitItem>
-                      <SplitItem>
-                        <Button variant="primary" onClick={handleSend} isDisabled={loading || !input.trim()}>
-                          Send
-                        </Button>
-                      </SplitItem>
-                    </Split>
+                      </div>
+                      <Button variant="primary" onClick={handleSend} isDisabled={loading || !input.trim()}>
+                        Send
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               )}
