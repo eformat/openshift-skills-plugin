@@ -49,7 +49,7 @@ An OpenShift Console Dynamic Plugin for scheduled execution of LLM-driven agent 
   - `ShellExecutor` type: `func(command string) string` - controls where commands run (nil = local `sh -c`)
   - `AgentResult` struct: `Response string`, `Iterations int`, `ToolCalls int`
   - `AgentOptions` struct: `Temperature float64`, `MaxTokens int`, `History []ChatMessage`, `Source string` (trace label), `ExperimentName string` (MLflow experiment)
-  - Single `shell` tool definition, iterates up to `maxIterations` (default 15) calling LLM and executing tool calls
+  - Single `shell` tool definition, iterates up to `maxIterations` (default 50) calling LLM and executing tool calls
   - Instrumented with OTel spans: root AGENT span → CHAT_MODEL per LLM call → TOOL per shell execution
   - Strips `<think>` tags from responses (for reasoning models). When the final response is empty after stripping, falls back to the last substantive assistant message or tool output
 - **`pkg/agent/context.go`** - `newTimeoutContext()` helper

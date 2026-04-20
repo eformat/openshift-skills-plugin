@@ -120,7 +120,7 @@ type ShellExecutor func(command string) string
 // If shellExec is nil, commands are executed locally via sh -c.
 func RunAgentLoop(ctx context.Context, completionsURL, token, model, systemPrompt, userMessage string, maxIterations int, shellExec ShellExecutor, opts *AgentOptions) (*AgentResult, error) {
 	if maxIterations <= 0 {
-		maxIterations = 15
+		maxIterations = 50
 	}
 
 	temperature := 0.7
