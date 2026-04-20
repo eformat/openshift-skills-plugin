@@ -41,6 +41,20 @@ Skills and MaaS endpoints can be shared globally via the **Share globally** togg
 
 ---
 
+## Namespace Permissions for Scheduled Tasks
+
+The plugin service account has pod management permissions (create, exec, delete) only in its own namespace by default. To run container-based scheduled tasks in other namespaces, an admin must grant access:
+
+```bash
+oc -n <target-namespace> create rolebinding openshift-skills-plugin-pod-manager \
+  --clusterrole=openshift-skills-plugin-pod-manager \
+  --serviceaccount=skills-plugin:skills-plugin
+```
+
+When creating or editing a scheduled task with a container image, the UI automatically checks whether the plugin has the required permissions in the selected namespace. If not, a warning is displayed with the exact command to run.
+
+---
+
 ## Admin-Only Features
 
 | Feature | Location |

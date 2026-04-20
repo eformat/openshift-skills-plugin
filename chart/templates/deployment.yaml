@@ -41,6 +41,12 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: POD_SERVICE_ACCOUNT
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.serviceAccountName
+            - name: PLUGIN_NAME
+              value: {{ .Values.plugin.name }}
             {{- if .Values.tls.enabled }}
             - name: TLS_CERT_FILE
               value: /var/serving-cert/tls.crt

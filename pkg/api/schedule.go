@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -748,6 +749,55 @@ func DeleteTaskHistory(w http.ResponseWriter, r *http.Request) {
 	db.Exec("DELETE FROM task_execution_history WHERE task_id = ?", id)
 	db.Exec("UPDATE scheduled_tasks SET run_count = 0, last_run = NULL, updated_at = ? WHERE id = ?", time.Now(), id)
 	jsonResponse(w, map[string]string{"message": "execution history deleted"})
+}
+
+// CheckSchedulePermissions checks whether the plugin SA can manage executor pods
+// in the requested namespace and returns the oc command to grant access if not.
+func CheckSchedulePermissions(w http.ResponseWriter, r *http.Request) {
+	ns := r.URL.Query().Get("namespace")
+	if ns == "" {
+		httpError(w, http.StatusBadRequest, "namespace is required")
+		return
+	}
+
+	canCreate, canExec, canDelete := kube.CheckPodPermissions(ns)
+	allowed := canCreate && canExec && canDelete
+
+	var missing []string
+	if !canCreate {
+		missing = append(missing, "create pods")
+	}
+	if !canExec {
+		missing = append(missing, "exec into pods")
+	}
+	if !canDelete {
+		missing = append(missing, "delete pods")
+	}
+
+	pluginName := os.Getenv("PLUGIN_NAME")
+	if pluginName == "" {
+		pluginName = "openshift-skills-plugin"
+	}
+	saName := os.Getenv("POD_SERVICE_ACCOUNT")
+	if saName == "" {
+		saName = "skills-plugin"
+	}
+	saNS := os.Getenv("POD_NAMESPACE")
+	if saNS == "" {
+		saNS = "skills-plugin"
+	}
+
+	resp := map[string]interface{}{
+		"allowed":   allowed,
+		"namespace": ns,
+	}
+	if !allowed {
+		resp["missing"] = missing
+		resp["oc_command"] = "oc -n " + ns + " create rolebinding " + pluginName + "-pod-manager" +
+			" --clusterrole=" + pluginName + "-pod-manager" +
+			" --serviceaccount=" + saNS + ":" + saName
+	}
+	jsonResponse(w, resp)
 }
 
 func GetTaskHistory(w http.ResponseWriter, r *http.Request) {

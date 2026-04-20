@@ -62,6 +62,18 @@ COOKIE=$(openssl rand -base64 32)
 helm upgrade --install skills-plugin chart/ -n skills-plugin --create-namespace --set mlflow.enabled=true --set mlflow.oauth.cookieSecret=$COOKIE
 ```
 
+### Namespace Permissions for Scheduled Tasks
+
+The plugin service account can manage executor pods in the plugin namespace by default. To allow container-based tasks in other namespaces, grant access with:
+
+```bash
+oc -n <target-namespace> create rolebinding openshift-skills-plugin-pod-manager \
+  --clusterrole=openshift-skills-plugin-pod-manager \
+  --serviceaccount=skills-plugin:skills-plugin
+```
+
+The Schedule UI will warn you if the plugin lacks permissions in the selected namespace and show the exact command to run.
+
 ## Simple Demo
 
 1. Deploy the helm chart

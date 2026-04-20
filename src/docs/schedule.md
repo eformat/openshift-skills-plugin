@@ -75,6 +75,8 @@ When a container image is specified, the task:
 
 This keeps the plugin pod clean and allows per-task RBAC via ServiceAccount selection.
 
+<div class="alert alert-warning">The plugin service account must have pod management permissions in the target namespace. If it doesn't, a warning will appear in the form with the exact <code>oc</code> command to grant access. See <a href="admin">Administration</a> for details.</div>
+
 ### Without Container Image (LLM-only)
 
 When no container image is specified, the agent loop runs commands directly in the plugin pod using the local shell.

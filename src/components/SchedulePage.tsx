@@ -32,6 +32,9 @@ import {
   DescriptionListTerm,
   DescriptionListDescription,
   ExpandableSection,
+  Alert,
+  ClipboardCopy,
+  ClipboardCopyVariant,
 } from '@patternfly/react-core';
 import {
   listScheduledTasks,
@@ -45,11 +48,13 @@ import {
   listEndpoints,
   listModels,
   getHealth,
+  checkSchedulePermissions,
   ScheduledTask,
   TaskHistory,
   Skill,
   MaaSEndpoint,
   ModelInfo,
+  PermissionCheck,
 } from '../utils/api';
 import { useAuth } from '../utils/AuthContext';
 
@@ -79,6 +84,7 @@ export default function SchedulePage() {
   const [runOnceDelay, setRunOnceDelay] = React.useState('now');
   const [selectedEndpoint, setSelectedEndpoint] = React.useState('');
   const [selectedModelId, setSelectedModelId] = React.useState('');
+  const [permissionWarning, setPermissionWarning] = React.useState<PermissionCheck | null>(null);
 
   React.useEffect(() => {
     loadTasks();
@@ -110,6 +116,19 @@ export default function SchedulePage() {
       }
     } catch (e) { setModels([]); }
   };
+
+  const checkPermissions = React.useCallback(async (ns: string, image: string) => {
+    if (!image || !ns) {
+      setPermissionWarning(null);
+      return;
+    }
+    try {
+      const result = await checkSchedulePermissions(ns);
+      setPermissionWarning(result.allowed ? null : result);
+    } catch (e) {
+      console.error('Permission check failed:', e);
+    }
+  }, []);
 
   const loadHistory = async (taskId: number) => {
     try {
@@ -170,6 +189,7 @@ export default function SchedulePage() {
     if (epId) {
       loadModelsForEndpoint(epId, task.model);
     }
+    checkPermissions(task.namespace, task.container_image || '');
     setShowCreate(true);
   };
 
@@ -216,7 +236,7 @@ export default function SchedulePage() {
     setServiceAccount('default'); setNamespace(pluginNamespace); setContainerImage('');
     setTemperature(0.2); setMaxTokens(2048); setRunOnce(false); setRunOnceDelay('now');
     setSelectedEndpoint(''); setSelectedModelId('');
-    setEditingTask(null);
+    setEditingTask(null); setPermissionWarning(null);
   };
 
   const statusColor = (s: string) => {
@@ -413,16 +433,25 @@ export default function SchedulePage() {
             <TextInput id="task-sa" value={serviceAccount} onChange={(_e, v) => setServiceAccount(v)} />
           </FormGroup>
           <FormGroup label="Namespace" isRequired fieldId="task-ns">
-            <TextInput id="task-ns" value={namespace} onChange={(_e, v) => setNamespace(v)} />
+            <TextInput id="task-ns" value={namespace} onChange={(_e, v) => { setNamespace(v); checkPermissions(v, containerImage); }} />
           </FormGroup>
           <FormGroup label="Container Image" fieldId="task-image">
-            <TextInput id="task-image" value={containerImage} onChange={(_e, v) => setContainerImage(v)} placeholder="quay.io/org/image:tag" />
+            <TextInput id="task-image" value={containerImage} onChange={(_e, v) => { setContainerImage(v); checkPermissions(namespace, v); }} placeholder="quay.io/org/image:tag" />
             <FormHelperText>
               <HelperText>
                 <HelperTextItem>Container image to use for the CronJob execution</HelperTextItem>
               </HelperText>
             </FormHelperText>
           </FormGroup>
+          {permissionWarning && (
+            <Alert variant="warning" isInline title="Plugin lacks pod permissions in this namespace" className="pf-v6-u-mb-md">
+              <p>The skills plugin service account cannot {permissionWarning.missing?.join(', ')} in namespace <strong>{permissionWarning.namespace}</strong>.</p>
+              <p>Run this command to grant access:</p>
+              <ClipboardCopy isReadOnly variant={ClipboardCopyVariant.expansion}>
+                {permissionWarning.oc_command}
+              </ClipboardCopy>
+            </Alert>
+          )}
           <FormGroup label="MaaS Endpoint" fieldId="task-endpoint">
             <FormSelect
               id="task-endpoint"

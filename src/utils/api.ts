@@ -156,6 +156,16 @@ export const getTaskHistory = (id: number) =>
 export const deleteTaskHistory = (id: number) =>
   request('/scheduled-tasks/' + id + '/history', { method: 'DELETE' });
 
+export interface PermissionCheck {
+  allowed: boolean;
+  namespace: string;
+  missing?: string[];
+  oc_command?: string;
+}
+
+export const checkSchedulePermissions = (namespace: string) =>
+  request<PermissionCheck>('/scheduled-tasks/check-permissions?namespace=' + encodeURIComponent(namespace));
+
 // MaaS Endpoints
 export interface MaaSEndpoint {
   id: number;

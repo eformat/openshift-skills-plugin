@@ -9,6 +9,7 @@ import (
 	"log"
 	"time"
 
+	authzv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -178,6 +179,45 @@ func DeleteExecutorPod(ep *ExecutorPod) error {
 	}
 	log.Printf("Deleted executor pod %s/%s", ep.Namespace, ep.Name)
 	return nil
+}
+
+// CheckPodPermissions checks whether the plugin SA can create, exec, and delete pods
+// in the given namespace using SelfSubjectAccessReview.
+func CheckPodPermissions(namespace string) (canCreate, canExec, canDelete bool) {
+	if clientset == nil {
+		return false, false, false
+	}
+	ctx := context.Background()
+
+	checks := []struct {
+		resource    string
+		subresource string
+		verb        string
+		result      *bool
+	}{
+		{"pods", "", "create", &canCreate},
+		{"pods", "exec", "create", &canExec},
+		{"pods", "", "delete", &canDelete},
+	}
+
+	for _, c := range checks {
+		sar, err := clientset.AuthorizationV1().SelfSubjectAccessReviews().Create(ctx,
+			&authzv1.SelfSubjectAccessReview{
+				Spec: authzv1.SelfSubjectAccessReviewSpec{
+					ResourceAttributes: &authzv1.ResourceAttributes{
+						Namespace:   namespace,
+						Verb:        c.verb,
+						Group:       "",
+						Resource:    c.resource,
+						Subresource: c.subresource,
+					},
+				},
+			}, metav1.CreateOptions{})
+		if err == nil {
+			*c.result = sar.Status.Allowed
+		}
+	}
+	return
 }
 
 func waitForPodRunning(ctx context.Context, namespace, podName string, timeout time.Duration) error {
