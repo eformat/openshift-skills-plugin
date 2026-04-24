@@ -85,6 +85,7 @@ export default function SchedulePage() {
   const [selectedEndpoint, setSelectedEndpoint] = React.useState('');
   const [selectedModelId, setSelectedModelId] = React.useState('');
   const [permissionWarning, setPermissionWarning] = React.useState<PermissionCheck | null>(null);
+  const [saveError, setSaveError] = React.useState('');
 
   React.useEffect(() => {
     loadTasks();
@@ -145,6 +146,7 @@ export default function SchedulePage() {
 
   const handleCreate = async () => {
     const selectedModel = models.find(m => m.id === selectedModelId);
+    setSaveError('');
     try {
       await createScheduledTask({
         name,
@@ -165,7 +167,7 @@ export default function SchedulePage() {
       setShowCreate(false);
       resetForm();
       loadTasks();
-    } catch (e) { console.error(e); }
+    } catch (e) { setSaveError(e instanceof Error ? e.message : 'Failed to create task'); }
   };
 
   const handleEdit = (task: ScheduledTask) => {
@@ -196,6 +198,7 @@ export default function SchedulePage() {
   const handleUpdate = async () => {
     if (!editingTask) return;
     const selectedModel = models.find(m => m.id === selectedModelId);
+    setSaveError('');
     try {
       await updateScheduledTask(editingTask.id, {
         name,
@@ -217,7 +220,7 @@ export default function SchedulePage() {
       setEditingTask(null);
       resetForm();
       loadTasks();
-    } catch (e) { console.error(e); }
+    } catch (e) { setSaveError(e instanceof Error ? e.message : 'Failed to update task'); }
   };
 
   const handleToggle = async (task: ScheduledTask) => {
@@ -236,7 +239,7 @@ export default function SchedulePage() {
     setServiceAccount('default'); setNamespace(pluginNamespace); setContainerImage('');
     setTemperature(0.2); setMaxTokens(2048); setRunOnce(false); setRunOnceDelay('now');
     setSelectedEndpoint(''); setSelectedModelId('');
-    setEditingTask(null); setPermissionWarning(null);
+    setEditingTask(null); setPermissionWarning(null); setSaveError('');
   };
 
   const statusColor = (s: string) => {
@@ -388,6 +391,11 @@ export default function SchedulePage() {
       >
         <ModalHeader title={editingTask ? 'Edit Scheduled Task' : 'New Scheduled Task'} />
         <ModalBody>
+          {saveError && (
+            <Alert variant="danger" isInline title="Error" className="pf-v6-u-mb-md">
+              {saveError}
+            </Alert>
+          )}
           <FormGroup label="Name" isRequired fieldId="task-name">
             <TextInput id="task-name" value={name} onChange={(_e, v) => setName(v)} />
           </FormGroup>
