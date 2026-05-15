@@ -237,7 +237,7 @@ export default function ChatPage() {
               </Nav>
             </SplitItem>
 
-            <SplitItem isFilled>
+            <SplitItem isFilled className="chat-main">
               {!currentSessionId ? (
                 <EmptyState>
                   <Title headingLevel="h2" size="lg">Skills Chat</Title>
