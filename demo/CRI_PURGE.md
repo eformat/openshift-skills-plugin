@@ -3,6 +3,10 @@ name: cri-purge
 description: Explores Disk pressure and high usage of disk space from crio based container images. Based on https://access.redhat.com/solutions/6738851
 ---
 
+## MANDATORY Output Format
+
+You MUST format your entire response. Do NOT output raw command stdout. Do NOT summarise command output in a single line. Always use markdown tables and headings exactly as shown
+
 ## Check for older container images that can be pruned
 
 Simple check of space available.

@@ -3,6 +3,10 @@ name: etcd-health
 description: Explores the health of etcd using oc commands. Performs simple remediation for etcd defragmentation. Based on https://access.redhat.com/solutions/5564771
 ---
 
+## MANDATORY Output Format
+
+You MUST format your entire response. Do NOT output raw command stdout. Do NOT summarise command output in a single line. Always use markdown tables and headings exactly as shown
+
 ## Basic Health Check
 
 Retreive etcd pod names.
