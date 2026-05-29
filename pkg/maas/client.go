@@ -80,13 +80,21 @@ func NewClient(baseURL, registryURL, apiKey, model string) *Client {
 }
 
 // Authenticate exchanges the bearer token for a long-lived session token.
-// POST {BaseURL}/v1/tokens with the bearer token to get a session token.
+// For registry endpoints, POST {RegistryURL}/v1/tokens with the bearer token.
+// For single-model endpoints (no registry), the API key is used directly.
 func (c *Client) Authenticate() error {
 	if c.token != "" {
 		return nil // already authenticated
 	}
 	if c.APIKey == "" {
 		return fmt.Errorf("no bearer token configured")
+	}
+
+	// Single-model endpoints are standard OpenAI-compatible — use the API key
+	// directly as the bearer token, no token exchange needed.
+	if c.RegistryURL == "" || IsSingleModelURL(c.RegistryURL) {
+		c.token = c.APIKey
+		return nil
 	}
 
 	tokenURL := strings.TrimRight(c.RegistryURL, "/") + "/v1/tokens"

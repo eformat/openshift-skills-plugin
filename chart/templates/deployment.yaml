@@ -9,6 +9,8 @@ metadata:
     app.kubernetes.io/component: plugin
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}

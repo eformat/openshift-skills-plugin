@@ -272,20 +272,26 @@ func executeContainerTask(db *sql.DB, historyID int64, startTime time.Time, task
 		}
 	}()
 
-	// Look up MaaS credentials
+	// Look up MaaS credentials — match endpoint by URL to get the correct API key
 	baseURL := task.BaseURL
 	apiKey := task.APIKey
 	registryURL := ""
 	if apiKey == "" {
 		var key, regURL string
-		err := db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&key, &regURL)
+		err := db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
+		if err != nil {
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
+		}
 		if err == nil {
 			apiKey = key
 			registryURL = regURL
 		}
 	} else {
 		var regURL string
-		err := db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&regURL)
+		err := db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&regURL)
+		if err != nil {
+			err = db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&regURL)
+		}
 		if err == nil {
 			registryURL = regURL
 		}
@@ -382,14 +388,20 @@ func executeLLMTask(db *sql.DB, historyID int64, startTime time.Time, taskID int
 	registryURL := ""
 	if apiKey == "" {
 		var key, regURL string
-		err := db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&key, &regURL)
+		err := db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
+		if err != nil {
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
+		}
 		if err == nil {
 			apiKey = key
 			registryURL = regURL
 		}
 	} else {
 		var regURL string
-		err := db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&regURL)
+		err := db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&regURL)
+		if err != nil {
+			err = db.QueryRow("SELECT url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&regURL)
+		}
 		if err == nil {
 			registryURL = regURL
 		}

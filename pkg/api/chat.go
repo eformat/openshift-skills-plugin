@@ -108,15 +108,23 @@ func SendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The session base_url is the model-specific inference URL.
-	// Look up the API key and registry URL from the MaaS endpoint (scoped to visible endpoints).
+	// Look up the API key from the endpoint whose URL matches the session's base_url.
 	baseURL := sess.BaseURL
 	apiKey := ""
 	registryURL := ""
 	var key, regURL string
 	if user.IsAdmin {
-		err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&key, &regURL)
+		err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
 	} else {
-		err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", user.Username).Scan(&key, &regURL)
+		err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", baseURL, user.Username).Scan(&key, &regURL)
+	}
+	if err != nil {
+		// Fallback: try matching by URL prefix (session base_url may include model path)
+		if user.IsAdmin {
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&key, &regURL)
+		} else {
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", baseURL, user.Username).Scan(&key, &regURL)
+		}
 	}
 	if err == nil {
 		apiKey = key
@@ -287,9 +295,16 @@ func WebSocketChat(w http.ResponseWriter, r *http.Request) {
 		registryURL := ""
 		var wsKey, wsRegURL string
 		if user.IsAdmin {
-			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 ORDER BY id LIMIT 1").Scan(&wsKey, &wsRegURL)
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? ORDER BY id LIMIT 1", baseURL).Scan(&wsKey, &wsRegURL)
 		} else {
-			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", user.Username).Scan(&wsKey, &wsRegURL)
+			err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND url = ? AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", baseURL, user.Username).Scan(&wsKey, &wsRegURL)
+		}
+		if err != nil {
+			if user.IsAdmin {
+				err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' ORDER BY id LIMIT 1", baseURL).Scan(&wsKey, &wsRegURL)
+			} else {
+				err = db.QueryRow("SELECT COALESCE(api_key,''), url FROM maas_endpoints WHERE enabled = 1 AND ? LIKE url || '%' AND (is_global = 1 OR owner = ?) ORDER BY id LIMIT 1", baseURL, user.Username).Scan(&wsKey, &wsRegURL)
+			}
 		}
 		if err == nil {
 			apiKey = wsKey
